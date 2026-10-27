@@ -61,6 +61,7 @@ def parse(body):
         req = {k: raw.get(k, d) for k, d in
                (("env", "default"), ("personality", "default"), ("agent", "claude"))}
         look = raw.get("look") or {}
+        voice = raw.get("voice", True)
     except (ValueError, KeyError, TypeError, AttributeError):
         raise ValueError('expected JSON {"meet_url": ..., "env": ..., "personality": ..., "agent": ...}')
     code = re.fullmatch(r"(?:/meet)?/([a-z]{3}-[a-z]{4}-[a-z]{3})", u.path)  # some Meet tabs show /meet/<code>
@@ -75,6 +76,9 @@ def parse(body):
             k in LOOK_KEYS and isinstance(v, str) and re.fullmatch(r"[a-z0-9-]{1,20}", v) for k, v in look.items()):
         raise ValueError(f"look must be an object with any of {', '.join(LOOK_KEYS)}")
     req["look"] = look
+    if not isinstance(voice, bool):
+        raise ValueError("voice must be true or false")
+    req["voice"] = voice
     req["meet_url"] = f"https://meet.google.com/{code[1]}"
     return req
 
@@ -129,7 +133,8 @@ def create(req, img, google):
         flags += ["--label", f"jamie.{k}={req[k]}"]
     # shortcut: the workspace lives in the container and is deleted when Jamie leaves; add a volume per instance to keep work
     docker("create", "--init", "--shm-size", "2g", "--name", name, "--label", "jamie=1",
-           "-e", f"JAMIE_ENV={env}", "-e", f"JAMIE_LOOK={json.dumps(req['look'])}", *flags, img,
+           "-e", f"JAMIE_ENV={env}", "-e", f"JAMIE_LOOK={json.dumps(req['look'])}",
+           "-e", f"JAMIE_VOICE={'on' if req.get('voice', True) else 'off'}", *flags, img,
            "python3", "/app/bot.py", req["meet_url"], "--env", env,
            "--personality", req["personality"], "--agent", req["agent"])
     try:
