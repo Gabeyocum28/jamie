@@ -347,7 +347,7 @@ Docker things this creates on your machine:
 
 ## 7. When something goes wrong
 
-- **Extension dropdowns say "Connect in Settings first"**: the controller isn't running, or the
+- **Extension dropdowns say "Connect first" (and the pill says Not connected or Offline)**: the controller isn't running, or the
   token is wrong. Start `./jamie.sh controller`, then paste the token again in Settings.
 - **"No free Google account" / "All Google accounts are in use"**: sign one in, or another one
   in, with `./jamie.sh google-login <name>`. Or stop a running Jamie.
