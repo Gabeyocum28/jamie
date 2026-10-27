@@ -16,6 +16,9 @@
 set -e
 cd "$(dirname "$0")"
 [ -f .env ] || { echo "Copy .env.example to .env first."; exit 1; }
+# Opt-in: JAMIE_DOCKER_PLATFORM=linux/amd64 runs Jamie under emulation (slower), for Macs where Xvfb crashes natively
+PLATFORM=$(sed -n 's/^JAMIE_DOCKER_PLATFORM=//p' .env)
+[ -n "$PLATFORM" ] && export DOCKER_DEFAULT_PLATFORM=$PLATFORM
 
 # --env from the args, else JAMIE_ENV in .env, else default
 ENV_NAME=$(sed -n 's/^JAMIE_ENV=//p' .env); ENV_NAME=${ENV_NAME:-default}
@@ -100,11 +103,16 @@ learned = json.loads(sys.argv[2]); json.dump({**learned, **room}, open(p, "w"), 
         "environments/$ENV_NAME/controls.json" "$json"
     fi ;;
   controller)
-    grep -q '^JAMIE_CONTROLLER_TOKEN=.' .env || echo "JAMIE_CONTROLLER_TOKEN=$(openssl rand -hex 24)" >> .env
+    # .env.example ships an empty token line: replace it rather than adding a second one
+    if ! grep -q '^JAMIE_CONTROLLER_TOKEN=.' .env; then
+      sed -i.bak '/^JAMIE_CONTROLLER_TOKEN=/d' .env && rm .env.bak
+      echo "JAMIE_CONTROLLER_TOKEN=$(openssl rand -hex 24)" >> .env
+    fi
     docker build -q -t jamie-controller controller >/dev/null
     # shortcut: the repo is mounted, not baked in, so edits apply without a rebuild; COPY it in for the homelab
     docker run --rm --init --name jamie-controller -p 127.0.0.1:7070:7070 \
-      -e JAMIE_CONTROLLER_TOKEN="$(sed -n 's/^JAMIE_CONTROLLER_TOKEN=//p' .env)" \
+      -e JAMIE_CONTROLLER_TOKEN="$(sed -n 's/^JAMIE_CONTROLLER_TOKEN=//p' .env | tail -n1)" \
+      ${PLATFORM:+-e DOCKER_DEFAULT_PLATFORM=$PLATFORM} \
       -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD:/jamie:ro" \
       -v jamie-claude:/logins/claude:ro \
       -v jamie-codex:/logins/codex:ro -v jamie-gemini:/logins/gemini:ro \
