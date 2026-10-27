@@ -211,6 +211,8 @@ class Judge:
                 verdict["action"] = "control"
             if verdict["control"] in ("leave", "stop_sharing", "reset"):  # ...or these in the wrong field
                 verdict["action"], verdict["control"] = verdict["control"], ""
+            if verdict["answer"] and verdict["action"] in ("none", "", "answer"):  # it answered: so it was for Jamie
+                verdict["action"] = "request"
             if verdict["action"] not in VALID:
                 raise ValueError(f"unexpected verdict {verdict}")
             if verdict["action"] == "control" and verdict["control"] not in self.controls:

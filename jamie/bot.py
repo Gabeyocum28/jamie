@@ -78,7 +78,7 @@ def core_prompt(cwd):
         "comes down to key presses in the shared tab or one command, save it as an instant control so next time "
         "it happens in a second without you: `python3 /app/bot.py --learn <name> --description '<what people "
         "would say>' --keys <Key> [<Key>...]` or `--run '<command>'` (no shell: no pipes or &&; `{arg}` as a "
-        "word of its own becomes what they asked for; put any script it needs in /learned/, which is kept "
+        f"word of its own becomes what they asked for; put any script it needs in {LEARNED}/, which is kept "
         "for this room, unlike your working directory). Also do this "
         "whenever someone asks you to learn or remember a shortcut. "
         "Don't tell people you can't do something on the computer or in the browser: try, and if one way "
@@ -607,8 +607,8 @@ class Agent:
                     event = json.loads(line)
                     if progress and event.get("type") == "assistant":
                         for block in event.get("message", {}).get("content", []):
-                            if block.get("type") == "tool_use" and (step := narrate(block)):
-                                progress(step)
+                            if block.get("type") == "tool_use":
+                                progress(narrate(block), block)
                     if event.get("type") == "result":
                         out = (event.get("result") or "").strip()
                         log(self.name, "->", out[:500])
@@ -675,8 +675,12 @@ async def worker(page, agent, queue, state):
         await avatar(page, "thinking")
         said = {"at": time.monotonic(), "last": ""}  # the ack was just said
 
-        def progress(step):  # narrate long jobs, at most every 10s, never the same thing twice in a row
-            if step != said["last"] and time.monotonic() - said["at"] > 10:
+        def progress(step, tool):  # narrate long jobs, at most every 10s, never the same thing twice in a row
+            path = tool.get("input", {}).get("file_path", "") if tool.get("name") in ("Write", "Edit") else ""
+            if path.endswith(CODE_FILES) and not said.get("ide"):  # code is being written: let people watch
+                said["ide"] = True
+                background(watch_code(page, path))
+            if step and step != said["last"] and time.monotonic() - said["at"] > 10:
                 said.update(at=time.monotonic(), last=step)
                 log("progress:", step)
                 speak_soon(page, step)
@@ -1299,6 +1303,19 @@ def background(coro):
 
 def speak_soon(page, text):
     background(speak(page, text))
+
+
+CODE_FILES = (".html", ".js", ".jsx", ".ts", ".tsx", ".css", ".py", ".go", ".rs", ".java", ".rb", ".php", ".sh")
+
+
+async def watch_code(page, path):
+    """Put VS Code on screen with the file the agent is writing (unless the editor is already up)."""
+    try:
+        if f":{IDE_PORT}" not in (await on_screen(page) or {}).get("url", ""):
+            await asyncio.sleep(1)  # let the first write land
+            log("Showing the code being written:", await ide(page, path))
+    except Exception as e:
+        log("Couldn't show the code:", e)
 
 
 def agent_busy(queue):
