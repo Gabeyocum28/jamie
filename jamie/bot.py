@@ -543,6 +543,14 @@ class Agent:
         self.name, self.servers = name, servers
         self.has_session = False  # after the first request, continue the same conversation
         self.proc = None  # claude: one process for the whole call (see run_claude)
+        self.cancelled = False
+
+    async def cancel(self):
+        """Stop the current task. The conversation is kept: the next request continues it."""
+        if self.proc and self.proc.returncode is None:
+            self.cancelled = True
+            self.proc.kill()
+            await self.proc.wait()
 
     def command(self, prompt=None):
         full, cont = PERMS == "full", self.has_session
@@ -601,6 +609,9 @@ class Agent:
             self.proc = None
             return f"Timed out after {TIMEOUT}s."
         self.proc = None  # it exited; the next request starts it again (with --continue)
+        if self.cancelled:
+            self.cancelled = False
+            return ""  # stopped on purpose: nothing to report
         return "claude stopped unexpectedly. Try again."
 
     async def run(self, prompt, progress=None):
@@ -649,6 +660,8 @@ async def worker(page, agent, queue, state):
                 speak_soon(page, step)
         try:
             reply = await agent.run(prompt, progress)
+            if not reply:  # cancelled
+                continue
             state["last_reply"] = reply
             speak_soon(page, voice.spoken(reply))
             await send(page, reply)
@@ -680,6 +693,7 @@ BUILTIN_CONTROLS = {
     "ide": "open the code editor (VS Code) on the shared screen",
     "quiet": "stop talking (Jamie stops speaking right away)",
     "notes": "show the live meeting notes (summary, decisions, action items) on the shared screen",
+    "cancel": "stop the task Jamie is working on right now (\"never mind\", \"cancel that\", \"stop, that's wrong\")",
 }
 SCROLL = {"scroll-down": "scrollBy({top: innerHeight * 0.8, behavior: 'smooth'})",
           "scroll-up": "scrollBy({top: -innerHeight * 0.8, behavior: 'smooth'})",
@@ -889,6 +903,13 @@ async def run_control(page, name, arg):
 
 async def act(page, agent, queue, action, request, ack, control_name="", arg=""):
     """Carry out a command from chat or speech. Returns True when Jamie should leave."""
+    if action == "control" and control_name == "cancel":
+        if agent.proc and agent_busy(queue):
+            await agent.cancel()
+            speak_soon(page, "Okay, I stopped.")
+            await send(page, "Okay, I stopped.")
+            log("control: cancel -> stopped the agent")
+        return False
     if action == "control":  # in the background: listening goes on while e.g. YouTube loads
         asyncio.create_task(run_control(page, control_name, arg))
         return False
@@ -1031,8 +1052,7 @@ async def listen(page, agent):
                     f"{len(snapshot or [])} caption block(s) on screen, busy with: {state['busy'][:60] or 'nothing'}")
             lines = caps.feed(snapshot)
             if TEST_AUDIO:  # Jamie hears itself in tests: what it says while talking isn't a request
-                # (Meet finishes a caption a few seconds after the words: allow for that)
-                mine = [ln for ln in lines if ln[0] == "You" and time.monotonic() - speaking["until"] < 8]
+                mine = [ln for ln in lines if ln[0] == "You" and said_by_me(ln[1])]
                 for _, t in mine:
                     log("heard myself:", t)
                 lines = [ln for ln in lines if ln not in mine]
@@ -1173,7 +1193,17 @@ async def read_captions(page):
 NOTES = None  # notes.Notes for the current call, set in listen()
 VOICE_ENGINE = voice.Voice()
 voice_lock = asyncio.Lock()
-speaking = {"until": 0.0}  # when Jamie last stopped talking (test mode: its own voice isn't a request)
+speaking = {"until": 0.0, "said": []}  # test mode: what Jamie said lately, so its own voice isn't a request
+
+
+def said_by_me(text):
+    """Whether a caption is Jamie's own voice: most of its words match something Jamie said in the last 30s."""
+    words = set(re.findall(r"[a-z']+", text.lower()))
+    for when, said in speaking["said"]:
+        if time.monotonic() - when < 30 and words:
+            if len(words & set(re.findall(r"[a-z']+", said.lower()))) / len(words) >= 0.6:
+                return True
+    return False
 
 
 async def speak(page, text):
@@ -1181,6 +1211,7 @@ async def speak(page, text):
     if not (VOICE and text and VOICE_ENGINE.available()):
         return
     try:
+        speaking["said"] = speaking["said"][-9:] + [(time.monotonic(), text)]
         audio = await VOICE_ENGINE.synth(text)
         async with voice_lock:
             speaking["until"] = float("inf")

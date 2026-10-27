@@ -414,7 +414,47 @@ async def click_on_screen():
     print("e2e OK")
 
 
+async def cancel():
+    """./jamie.sh e2e cancel: "never mind" stops a task midway, and Jamie still works afterwards."""
+    audio = "/tmp/jamie-test-cancel.wav"
+    timeline(audio, [(25, os.path.join(HERE, "test-cancel-0.wav")), (14, os.path.join(HERE, "test-cancel-1.wav")),
+                     (20, os.path.join(HERE, "test-cancel-2.wav"))])
+    url = await new_meeting()
+    print("e2e: meeting", url, flush=True)
+    proc = await asyncio.create_subprocess_exec(
+        "python3", os.path.join(HERE, "bot.py"), url, env={**os.environ, "JAMIE_TEST_AUDIO": audio},
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+    seen, start = [], time.monotonic()
+
+    async def pump():
+        async for line in proc.stdout:
+            seen.append(line.decode(errors="replace").rstrip())
+            print("  bot |", seen[-1], flush=True)
+
+    reader = asyncio.create_task(pump())
+    try:
+        while time.monotonic() - start < 240 and proc.returncode is None and not any(
+                "claude ->" in s and re.search(r"\b(4|four)\b", s, re.I) for s in seen):
+            await asyncio.sleep(1)
+    finally:
+        if proc.returncode is None:
+            proc.terminate()
+        await proc.wait()
+        reader.cancel()
+    stopped = [i for i, s in enumerate(seen) if "control: cancel -> stopped the agent" in s]
+    snake_done = any("claude ->" in s and "snake" in s.lower() for s in seen)
+    four = any("claude ->" in s and re.search(r"\b(4|four)\b", s, re.I) for s in seen)
+    checks = [(bool(stopped), "\"never mind\" stopped the agent mid-task"),
+              (not snake_done, "the snake game was never reported done"),
+              (four, "the next question was answered (two plus two)")]
+    for good, what in checks:
+        print(f"e2e: {'ok ' if good else 'NO '} {what}")
+    if not all(good for good, _ in checks):
+        sys.exit(1)
+    print("e2e OK")
+
+
 if __name__ == "__main__":
     env = os.environ.get("JAMIE_ENV", "default")
     asyncio.run(room(env) if env in ROOMS else learn() if "learn" in sys.argv else vibe() if "vibe" in sys.argv
-                else click_on_screen() if "open" in sys.argv else main())
+                else click_on_screen() if "open" in sys.argv else cancel() if "cancel" in sys.argv else main())
