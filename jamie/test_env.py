@@ -52,8 +52,9 @@ def main():
         assert set(a.servers) == {"browser", "notes"}, a.servers
         cmd = a.command("-rf everything")
         assert cmd[0] == agent, cmd
+        assert agent != "claude" or cmd[cmd.index("--session-id") + 1] == a.session, cmd  # its own conversation
         a.has_session = True
-        assert {"claude": "--continue", "codex": "resume", "gemini": "--resume"}[agent] in a.command("x")
+        assert {"claude": "--resume", "codex": "resume", "gemini": "--resume"}[agent] in a.command("x")
 
     assert "The team's project" not in read(f"{ws}/CLAUDE.md")  # no project picked
     os.makedirs(f"{ws}/project")
