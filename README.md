@@ -1,23 +1,48 @@
 # Jamie
 
-An AI teammate that joins your Google Meet calls. From a Chrome extension you pick three things:
+An AI teammate that joins your Google Meet calls, for work, school and fun. You talk to it like a
+person ("Hey Jamie, pull up that video", "Jamie, what did we decide?"), and it listens, talks back,
+shares its screen, takes notes, builds things live, runs games, and learns shortcuts as it goes.
 
-- an **environment**: a "room" with its own focus, software and tools, such as `math`
+From a Chrome extension you pick:
+- an **environment**: a "room" with its own focus, tools and on-screen apps (`study`, `work`, `fun`,
+  `math`, `default`)
 - a **personality**: how it talks
-- an **agent**: the AI that does the work, either Claude Code, Codex or Gemini, on your own subscription
+- an **agent**: the AI that does the real work, on your own subscription (Claude Code, Codex or Gemini)
+- a **look**: its animated avatar
 
-Jamie then joins the meeting. Anyone in the call types a request in the Meet chat, and Jamie does
-it. It can answer, research the web, drive its own browser (play, pause, fullscreen, skip ads),
-screen-share pages and videos, write and run code, and build small web apps you can open.
+**What it can do**
+- **Hears the call.** It reads Meet's live captions, with speaker names, and knows when it's being
+  talked to. That covers misheard names ("Amy" for "Jamie"), follow-ups without its name, and
+  people talking *about* it rather than to it.
+- **Talks back.** Its voice goes into the call: offline by default, or ElevenLabs if you add a key.
+  The avatar's mouth moves with the audio, and "Jamie, stop talking" cuts it off.
+- **Acts instantly.** Simple requests skip the AI agent entirely:
+  - pause, play, fullscreen, skip ad, scroll, go back
+  - "play that video" (clicks what's on screen), "play a video about…", "show the Wikipedia page…"
+  - open the code editor, show the notes
+  - anything a room adds
+
+  Each takes about a second after you finish speaking.
+- **Does real work.** The agent researches, answers questions, writes and runs code live in VS
+  Code on the shared screen, and builds on-screen apps (flashcards, agendas, trivia).
+- **Takes meeting notes.** Live notes (summary, decisions, action items, open questions) build up
+  as people talk. They can be put on screen, they're posted to chat when Jamie leaves, and they're
+  saved with the transcript.
+- **Learns.** When it works out something repeatable, it saves it as a new instant control for
+  that room. Next time it happens in a second.
 
 ```
 Chrome extension ──► controller (one container on your machine)
                         └─► builds the room's image, starts a Jamie container per meeting
-                               └─► Chromium on a virtual screen joins Meet, reads chat,
-                                   hands each request to the agent CLI, replies in chat
+                               └─► Chromium on a virtual screen joins Meet
+                                     captions ─► judge (Haiku, ~1s) ─┬─► instant control (no LLM)
+                                                                     └─► agent (Claude Code, kept running)
+                                     voice ◄── replies               screen share ◄── stage tab
 ```
 
-Every Jamie is a fresh container, and it's deleted when Jamie leaves. Logins live in Docker
+Every Jamie is a fresh container, deleted when it leaves. What's worth keeping (notes, transcripts,
+things it built, shortcuts it learned) is kept per room in Docker volumes. Logins live in Docker
 volumes on your machine, never in the repo.
 
 ---
@@ -143,23 +168,28 @@ the Jamie card in `chrome://extensions`.
    color, motion and an accessory, with a live preview. Then click **Send Jamie**. The first start of a room builds its
    image and can take a few minutes; after that it takes seconds.
 3. **Admit Jamie** when Meet asks. It turns on captions and posts "Jamie here. I'm listening and
-   keeping a transcript." in chat. Its camera shows an animated face. The face turns
-   purple, with orbiting dots, while Jamie is working on something.
+   keeping a transcript." in chat. The avatar turns purple, with orbiting sparks, while Jamie works,
+   and its mouth moves when it talks.
 4. **Talk to it out loud**, the way you'd talk to a teammate:
-   - "Hey Jamie, pull up the new MrBeast video."
-   - "Jamie, can you skip this ad?"
-   - "Make the chart red and blue instead." (a follow-up right after Jamie answered doesn't need its name)
-   - "Jamie, you can leave."
 
-   Talking *about* Jamie ("Jamie is a fun tool we built") is ignored. It answers in chat for now;
-   speaking back is coming. Everything said goes into `transcript.md` in its working folder, so
-   "Jamie, write up notes from this meeting" works too.
+   | You say | What happens |
+   |---|---|
+   | "Hey Jamie, play a video about funny cats" | Searches YouTube, shares it fullscreen, skips ads (~8s, no agent) |
+   | "Jamie, pause" / "play" / "scroll down" / "go back" | Instant |
+   | "Jamie, play **that** Guardians of the Galaxy video" | Clicks it on the shared screen |
+   | "Jamie, what's the capital of Australia?" | The agent answers, out loud and in chat |
+   | "Hey Jamie, can we start vibe coding? Let's make a to-do app" | Opens VS Code on screen and builds it live |
+   | "Jamie, show the meeting notes" | Live notes, updating on screen as people talk |
+   | "Jamie, let's play space trivia" (fun room) | Builds a game show; "next question", "reveal the answer" are instant |
+   | "Jamie, learn a shortcut: when I say coin flip, flip a coin" | Saves it; "Jamie, coin flip" is now instant |
+   | "Jamie, stop talking" / "stop sharing" / "you can leave" | Leaving posts the decisions and action items to chat |
+
+   - **Follow-ups** right after Jamie answers don't need its name ("make it red instead").
+   - **Talking *about* Jamie** ("Jamie is a fun tool we built") is ignored.
 5. Or type in the Meet chat: the trigger, then your request:
 
 ```
-/jamie pull up a video of a cat playing piano and make it fullscreen
-/jamie pause it                      (anything in its browser: skip ads, scroll, click...)
-/jamie make a pomodoro timer web app and run it on port 3000
+/jamie pull up a video of a cat playing piano
 /jamie stop                          (stop screen sharing)
 /jamie reset                         (forget the conversation so far)
 /jamie leave                         (leave the call)
@@ -174,21 +204,28 @@ From the extension's **Running** list you can:
 
 The meeting you're in is shown in bold.
 
-**How hearing works.** Jamie reads Meet's live captions, with speaker names, and adds each
-finished sentence to the transcript. Every time someone pauses, a fast model (Claude Haiku, about
-4 seconds) reads the new lines and decides one of these:
-- someone is asking Jamie for something
-- they're still mid-request
-- they want it to stop sharing, start over, or leave
-- none of the above
+**How hearing works.** Jamie reads Meet's live captions and adds each finished line to the
+transcript. Whenever someone pauses, a fast model (Claude Haiku, kept running, ~1 second) reads the
+new lines. It also sees who's in the call, what's on the shared screen and what Jamie just said,
+and picks one of these:
+- **an instant control:** done by the bot directly, in about half a second
+- **a request:** rewritten as one clear instruction for the agent
+- **still talking:** wait for the rest
+- **stop sharing / reset / leave**
+- **nothing for Jamie**
 
-Requests get rewritten into one clear instruction for the main agent, such as "Change the chart
-colors to red and blue". The judge uses the Claude login even if the main agent is Codex or
-Gemini. Without a Claude login, it falls back to reacting to the name "Jamie". The code is in
-`jamie/hearing.py`.
+The judge uses the Claude login even if the agent is Codex or Gemini. Without a Claude login it
+falls back to reacting to the name. Code: `jamie/hearing.py`. `./jamie.sh judge` scores it on 36
+real phrases.
 
-Each Jamie keeps its conversation for as long as it's in the call. Files it makes are deleted when
-it leaves. Anything worth keeping goes in the room folder, or ask Jamie to push it somewhere.
+**Voice.** Set `ELEVENLABS_API_KEY` (and optionally `ELEVENLABS_VOICE_ID`) in `.env` for
+ElevenLabs. Otherwise Jamie uses Piper, offline and free. `JAMIE_VOICE=off` keeps it silent.
+Code: `jamie/voice.py`. Chat always gets the full text; speech gets the first sentence or two.
+
+**What's kept.** A Jamie's working folder goes when it leaves. The meeting's notes, its part of the
+transcript, and anything the agent saves to `/files` are kept per room. Copy them to your Mac with
+`./jamie.sh files --env <room>`. Shortcuts Jamie taught itself are listed with `./jamie.sh learned
+--env <room>`, and `--keep` writes them into the room's `controls.json` so they can be committed.
 
 ### Without the extension
 
@@ -245,9 +282,15 @@ jamie/
                         replies, screen-shares (--show)
   hearing.py            captions -> transcript, and the Haiku judge that decides when Jamie
                         is being talked to
+  voice.py              text -> speech (ElevenLabs or offline Piper)
+  notes.py              live meeting notes (notes.md) and the page that shows them
+  cdp_filter.py         hides the Meet tab from the agent's browser tools (touching it ends the call)
+  judge_eval.py         scores the judge on real phrases (./jamie.sh judge)
+  e2e.py                end-to-end checks in a real Meet (./jamie.sh e2e [learn] [--env room])
+  test-*.wav            recorded speech the e2e checks play through Jamie's microphone
   test_hearing.py       self-check: caption handling and the judge's fallback
-  e2e.py                end-to-end check in a real Meet (./jamie.sh e2e)
-  test-request.wav      the recorded request e2e.py plays through Jamie's microphone
+  test_voice.py         self-check: what gets spoken, offline speech
+  test_notes.py         self-check: the notes page and the end-of-meeting recap
   test_avatar.py        self-check: the avatar animates, also behind a screen share
   test_env.py           self-check: rooms, personalities, agent setup
   test_show.py          self-check: screen sharing against a fake Meet page
@@ -261,7 +304,11 @@ extension/              the Chrome extension (manifest, popup.html, popup.js)
                         preview, and the image copies it in so the bot can show it in Meet
 environments/           rooms; each folder is one. README.md explains everything about them
   default/              general-purpose room
-  math/                 math room: the example to copy
+  math/                 math: sympy, plots, LaTeX on screen
+  study/                school: tutoring, flashcards on screen
+  work/                 meetings: agenda board with timer, decisions, action items
+  fun/                  hangouts: trivia game show, would-you-rather, music
+  test_rooms.py         checks the rooms' on-screen tools (python3 environments/test_rooms.py)
 personalities/          one .md file per personality
 addons/                 tools waiting to be added to a room; README.md explains them
 workspace/              files from ./jamie.sh join runs (gitignored)
@@ -277,6 +324,8 @@ Docker things this creates on your machine:
 | `jamie-<room>-<id>` | one running Jamie |
 | volumes `jamie-google-<name>` | a signed-in Google account each |
 | volumes `jamie-claude`, `jamie-codex`, `jamie-gemini` | agent logins |
+| volumes `jamie-learned-<room>` | instant controls Jamie taught itself in that room |
+| volumes `jamie-files-<room>` | meeting notes, transcripts and things Jamie built in that room |
 
 ## 6. Command reference
 
@@ -288,7 +337,12 @@ Docker things this creates on your machine:
 ./jamie.sh debug <meet-url> [...]     join and dump Meet's page to workspace/<env>/meet-dump.html
 ./jamie.sh shell [--env NAME]         a shell inside a room's image
 ./jamie.sh test                       run all self-checks (fast, no real call)
-./jamie.sh e2e                        end-to-end check in a real Meet (~2 min, see below)
+./jamie.sh judge                      score the judge on 36 real phrases (~30s of model calls)
+./jamie.sh e2e                        end-to-end check in a real Meet (~5 min, see below)
+./jamie.sh e2e learn                  ...Jamie teaches itself a shortcut, then uses it
+./jamie.sh e2e --env fun|study|work   ...a room's on-screen app, driven by its own controls
+./jamie.sh learned [--env N] [--keep] shortcuts Jamie taught itself (--keep: into controls.json)
+./jamie.sh files [--env N]            copy kept notes/transcripts/work to ./files/<room>/
 ```
 
 ## 7. When something goes wrong
@@ -308,16 +362,18 @@ Docker things this creates on your machine:
 - **See what a Jamie is doing**: `docker logs -f <id>`, with the id from the extension's list or
   `docker ps`.
 - **Make sure the core still works**: `./jamie.sh test`. For the real thing, `./jamie.sh e2e`. Jamie
-  starts its own Meet and joins it alone, and its microphone plays a recorded request: "Hey Jamie,
-  pull up a YouTube video of a cat playing piano and share it". The test passes only when Meet
-  shows Jamie presenting, so it covers captions, the judge, the agent and screen sharing for real.
-  It needs `google-login` and an agent login, and the account can't be running another Jamie.
+  starts its own Meet and joins it alone, and its microphone plays recorded speech: a video
+  request, "pause the video", "open the code editor", a trivia question, a team decision, "show the
+  meeting notes" and "you can leave now". It checks each one happened in the real call, from Meet
+  showing Jamie presenting to Meet captioning Jamie's own voice. It needs `google-login` and an
+  agent login, and the account can't be running another Jamie.
+- **Jamie heard but did the wrong thing**: look for the `judge:` lines in `docker logs <id>`. Add the
+  phrase to `jamie/judge_eval.py`, fix the prompt in `jamie/hearing.py`, and run `./jamie.sh judge`.
 
 ## Security
 
-- **Anyone who can type the trigger in the chat can run commands as Jamie.** With
-  `JAMIE_PERMISSIONS=full`, anyone in the call who knows the trigger can make Jamie do
-  anything inside its container. That includes reading the agent login and using its Google
+- **Anyone in the call can ask Jamie to do things, out loud or with the chat trigger.** With
+  `JAMIE_PERMISSIONS=full`, that means anything inside its container. That includes reading the agent login and using its Google
   account session for as long as Jamie is in the call. So:
   - set `JAMIE_TRIGGER` to something unguessable
   - only bring Jamie to calls with people you trust
