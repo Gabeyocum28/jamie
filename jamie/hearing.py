@@ -75,7 +75,8 @@ comes from live captions, so expect recognition errors: "{name}" often comes thr
 similar-sounding word or name ("Amy", "Jaime", "Jamey", "Jay me", "Jammy"). If that name isn't one
 of the people in the call, it's {name}. Decide whether the NEW lines ask {name} to do something.
 
-- "request": someone asks {name} to do, find, show, explain, build, check or change something.
+- "request": someone asks {name} a question ("Jamie, what's the capital of Peru?", "Jamie, how
+  does this work?") or asks it to do, find, show, explain, build, check or change something.
   This includes a follow-up to what {name} just said or did, even without its name. Write
   "request" as one self-contained instruction: resolve "it", "that", "this" from the context, keep
   the details, and drop filler words.
@@ -150,6 +151,12 @@ class Judge:
             if event.get("type") == "result":
                 return verdict(event.get("result") or "")
         raise RuntimeError("judge process ended")
+
+    async def close(self):
+        if self.proc and self.proc.returncode is None:
+            self.proc.kill()
+            await self.proc.wait()
+        self.proc = None
 
     async def warm_up(self):
         """Start the process and make one call, while Jamie joins, so the first real one is fast."""

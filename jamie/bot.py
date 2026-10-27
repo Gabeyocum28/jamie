@@ -9,6 +9,7 @@ Runs inside an environment's container; ./jamie.sh on the host builds and starts
 """
 import argparse
 import asyncio
+import base64
 import json
 import os
 import re
@@ -25,6 +26,7 @@ from playwright.async_api import async_playwright, TimeoutError as PWTimeout
 
 import cdp_filter
 import hearing
+import voice
 
 PROFILE = os.environ.get("JAMIE_PROFILE", "/data/chrome-profile")
 WORKSPACE = os.environ.get("JAMIE_WORKSPACE", "/workspace")        # workspace/<env> on the host
@@ -89,6 +91,7 @@ CHROME_ARGS = [
 ]
 # End-to-end test (e2e.py): Jamie's microphone plays this recording, and Jamie listens to itself
 TEST_AUDIO = os.environ.get("JAMIE_TEST_AUDIO")
+VOICE = os.environ.get("JAMIE_VOICE", "on") != "off"  # speak replies into the call (voice.py)
 if TEST_AUDIO:
     CHROME_ARGS.append(f"--use-file-for-fake-audio-capture={TEST_AUDIO}")
 
@@ -179,7 +182,7 @@ async def join(page, url):
         log("Not signed in, joining as guest named", NAME)
         await name_box.first.fill(NAME)
 
-    if not TEST_AUDIO:  # (the test speaks through the microphone)
+    if not TEST_AUDIO and not VOICE:  # with a voice, the mic is avatar.js's channel: silent unless Jamie talks
         # Wait for this one: the fake microphone beeps. The camera stays on: it shows the avatar.
         mic = page.get_by_role("button", name=re.compile("turn off microphone", re.I)).first
         await mic.wait_for(timeout=10_000)
@@ -606,6 +609,7 @@ async def worker(page, agent, queue, state):
         try:
             reply = await agent.run(prompt)
             state["last_reply"] = reply
+            speak_soon(page, voice.spoken(reply))
             await send(page, reply)
         except Exception as e:
             log("worker error:", e)
@@ -633,6 +637,7 @@ BUILTIN_CONTROLS = {
     "play-video": "search YouTube and play the top video fullscreen; arg = what to search for",
     "show": "open a website on the shared screen; arg = its full URL",
     "ide": "open the code editor (VS Code) on the shared screen",
+    "quiet": "stop talking (Jamie stops speaking right away)",
 }
 SCROLL = {"scroll-down": "scrollBy({top: innerHeight * 0.8, behavior: 'smooth'})",
           "scroll-up": "scrollBy({top: -innerHeight * 0.8, behavior: 'smooth'})",
@@ -756,12 +761,18 @@ async def control(page, name, arg=""):
         return f"Showing {arg}."
     if name == "ide":
         return await ide(page)
+    if name == "quiet":
+        await page.evaluate("window.__jamieVoice && window.__jamieVoice.stop()")
+        return "Quiet."
     return await video(page, name)
 
 
 async def run_control(page, name, arg):
     try:
-        log("control:", name, arg, "->", await asyncio.wait_for(control(page, name, arg), 40))
+        result = await asyncio.wait_for(control(page, name, arg), 40)
+        log("control:", name, arg, "->", result)
+        if name in ("play-video", "open", "show", "ide"):  # took a moment: say what's up (pause etc. speak for themselves)
+            speak_soon(page, result)
     except Exception as e:
         log("control failed:", name, arg, e)
         await send(page, f"Couldn't {name} {arg}: {str(e).splitlines()[0]}".replace("  ", " "))
@@ -773,8 +784,10 @@ async def act(page, agent, queue, action, request, ack, control_name="", arg="")
         asyncio.create_task(run_control(page, control_name, arg))
         return False
     if ack:
+        speak_soon(page, ack)
         await send(page, ack)
     if action == "leave":
+        await asyncio.sleep(1.5)  # let the goodbye be heard
         await leave_button(page).first.click()
         return True
     if action == "stop_sharing":
@@ -820,6 +833,8 @@ async def listen(page, agent):
         log(f"judge ready in {time.monotonic() - start:.1f}s")
     warm = asyncio.create_task(warm_up())  # noqa: F841 (runs while Jamie finishes joining)
     await agent.start()
+    if VOICE:
+        asyncio.create_task(VOICE_ENGINE.warm_up())  # load the voice model before the first reply
     await chat_box(page)
     await captions_on(page)
     last_check = last_beat = last_skip = time.monotonic()
@@ -888,6 +903,12 @@ async def listen(page, agent):
                 log(f"listening: captions {'on' if snapshot is not None else 'NOT FOUND'}, "
                     f"{len(snapshot or [])} caption block(s) on screen, busy with: {state['busy'][:60] or 'nothing'}")
             lines = caps.feed(snapshot)
+            if TEST_AUDIO:  # Jamie hears itself in tests: what it says while talking isn't a request
+                # (Meet finishes a caption a few seconds after the words: allow for that)
+                mine = [ln for ln in lines if ln[0] == "You" and time.monotonic() - speaking["until"] < 8]
+                for _, t in mine:
+                    log("heard myself:", t)
+                lines = [ln for ln in lines if ln not in mine]
             if lines:
                 transcribe(lines)
                 for s, t in lines:
@@ -927,6 +948,7 @@ async def listen(page, agent):
     finally:
         task.cancel()
         await agent.reset()
+        await judge.close()
 
 
 async def judged(judge, context, batch, state, people, page):
@@ -988,7 +1010,8 @@ def avatar_script():
     except json.JSONDecodeError:
         look = {}
     with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "avatar.js")) as f:
-        return f"window.__jamieLook = {json.dumps(look)};\n" + f.read()
+        return (f"window.__jamieLook = {json.dumps(look)};\n"
+                f"window.__jamieMicPassthrough = {json.dumps(bool(TEST_AUDIO))};\n" + f.read())
 
 
 async def avatar_fps(page, fps):
@@ -1011,6 +1034,31 @@ async def read_captions(page):
         return await asyncio.wait_for(page.evaluate(hearing.CAPTIONS_JS), 5)
     except Exception:
         return None
+
+
+VOICE_ENGINE = voice.Voice()
+voice_lock = asyncio.Lock()
+speaking = {"until": 0.0}  # when Jamie last stopped talking (test mode: its own voice isn't a request)
+
+
+async def speak(page, text):
+    """Say text into the call (one thing at a time). Never raises: speech is a nicety."""
+    if not (VOICE and text and VOICE_ENGINE.available()):
+        return
+    try:
+        audio = await VOICE_ENGINE.synth(text)
+        async with voice_lock:
+            speaking["until"] = float("inf")
+            await page.evaluate("b => window.__jamieVoice && window.__jamieVoice.ctx && window.__jamieVoice.say(b)",
+                                base64.b64encode(audio).decode())
+    except Exception as e:
+        log("Couldn't speak:", str(e).splitlines()[0])
+    finally:
+        speaking["until"] = time.monotonic()
+
+
+def speak_soon(page, text):
+    asyncio.create_task(speak(page, text))
 
 
 def agent_busy(queue):

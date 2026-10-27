@@ -370,14 +370,56 @@
 
   window.JamieAvatar = { OPTIONS, DEFAULT, create };
 
-  // In Meet: hand the animation to Meet as the camera (audio stays real). The bot sets
-  // window.__jamieLook before this file runs.
+  // In Meet: hand the animation to Meet as the camera, and a voice channel as the microphone.
+  // The bot sets window.__jamieLook (and, in tests, __jamieMicPassthrough) before this file runs.
   if (location.hostname !== "meet.google.com" || window.__jamieHooked) return;
   window.__jamieHooked = true;
   let stream;
   const gum = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+
+  // Jamie's microphone is a mixer: silent unless Jamie speaks (voice.say), so it can stay unmuted.
+  // The container's fake device (a beep) never reaches Meet; tests pass their recording through.
+  const voice = (window.__jamieVoice = { ctx: null, dest: null, source: null });
+  async function mic(constraints) {
+    if (!voice.ctx) {
+      voice.ctx = new AudioContext();
+      voice.dest = voice.ctx.createMediaStreamDestination();
+      voice.analyser = voice.ctx.createAnalyser();
+      voice.analyser.fftSize = 512;
+      voice.analyser.connect(voice.dest);
+      if (window.__jamieMicPassthrough) {
+        const real = await gum({ audio: constraints.audio });
+        voice.ctx.createMediaStreamSource(real).connect(voice.dest);
+      }
+    }
+    return voice.dest.stream.getAudioTracks().map((t) => t.clone());
+  }
+  voice.say = async (b64) => {  // play audio (any format the browser decodes) into the call; resolves when done
+    voice.stop();
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    const buffer = await voice.ctx.decodeAudioData(bytes.buffer);
+    const src = (voice.source = voice.ctx.createBufferSource());
+    src.buffer = buffer;
+    src.connect(voice.analyser);
+    const level = new Uint8Array(voice.analyser.fftSize), av = window.__jamieAvatar;
+    const prev = av && av.state;
+    if (av) av.state = "talking";
+    const meter = setInterval(() => {  // the avatar's mouth follows the real loudness
+      voice.analyser.getByteTimeDomainData(level);
+      const rms = Math.sqrt(level.reduce((s, v) => s + (v - 128) ** 2, 0) / level.length) / 128;
+      if (av) av.mouth = Math.min(1, rms * 4);
+    }, 50);
+    await new Promise((done) => { src.onended = done; src.start(); });
+    clearInterval(meter);
+    if (av) { av.mouth = null; if (av.state === "talking") av.state = prev === "talking" ? "listening" : prev || "listening"; }
+    voice.source = null;
+  };
+  voice.stop = () => { try { voice.source && voice.source.stop(); } catch (e) {} };
+
   navigator.mediaDevices.getUserMedia = async (constraints = {}) => {
-    if (!constraints.video) return gum(constraints);
+    if (!constraints.video) {
+      return constraints.audio ? new MediaStream(await mic(constraints)) : gum(constraints);
+    }
     if (!stream) {
       // 16:9 at 720p, the shape and size of a Meet tile, so Meet doesn't stretch a small picture
       const canvas = Object.assign(document.createElement("canvas"), { width: 1280, height: 720 });
@@ -392,7 +434,7 @@
     }
     window.__jamieCameraAsked = constraints.video;  // what Meet wanted, for debugging
     const out = new MediaStream(stream.getVideoTracks().map((t) => Object.assign(t.clone(), { contentHint: "detail" })));
-    if (constraints.audio) (await gum({ audio: constraints.audio })).getAudioTracks().forEach((t) => out.addTrack(t));
+    if (constraints.audio) (await mic(constraints)).forEach((t) => out.addTrack(t));
     return out;
   };
 })();
