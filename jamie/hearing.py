@@ -47,10 +47,50 @@ def fresh(said, text):
     return words[max(ends):] if ends else words  # no overlap: the old text scrolled away entirely
 
 
+# Short spoken commands done the moment the captions show them: no waiting for a pause, no judge.
+# Only things that are harmless if a caption was wrong (pausing a video, muting it).
+QUICK = {
+    "pause": r"pause|pause (it|this|that|the video|the song|the music)|stop the video|hold on,? pause( it)?",
+    "play": r"resume|unpause|play it|keep playing|play the video|press play",
+    "mute": r"mute|mute (it|the video|the sound)",
+    "unmute": r"unmute|unmute (it|the video|the sound)",
+    "skip-ad": r"skip( the)? ads?",
+    "fullscreen": r"(go |make it )?full ?screen",
+    "exit-fullscreen": r"(exit|leave) full ?screen",
+}
+FILLER = r"(?:(?:hey|hi|ok|okay|um|uh|yeah|yes|so|and|alright|now|oh)\s+)*"
+POLITE = r"(?:(?:can|could|would|will) you\s+)?(?:please\s+)?"
+QUICK_TAIL = re.compile(r"^\W*(it|this|that|the video|the song|the music|the sound|please|now)?\W*$", re.I)
+
+
+def quick(words, names, solo=False):
+    """The instant control a short spoken command asks for, or None: "Jamie, pause", "hey Jamie can you
+    mute it". Without the name only when Jamie is alone with one person (solo)."""
+    text = " ".join(re.sub(r"[^\w' ]", " ", " ".join(words).lower()).split())
+    if not text or len(text.split()) > 10:
+        return None
+    m = re.fullmatch(rf"{FILLER}(?P<name>(?:{names})\s+)?{POLITE}(?P<cmd>.+?)(?:\s+please)?", text)
+    if not m or not (m.group("name") or solo):
+        return None
+    return next((c for c, pat in QUICK.items() if re.fullmatch(pat, m.group("cmd"))), None)
+
+
 class Captions:
     def __init__(self, hear_self=False):
         self.blocks = {}  # id -> {"text", "changed", "said"}
         self.hear_self = hear_self  # the end-to-end test talks through Jamie's own microphone
+
+    def unsaid(self, block):
+        """The words in a caption block (still being spoken, maybe) that haven't been taken yet."""
+        st = self.blocks.get(block["id"])
+        return fresh(st["said"], block["text"]) if st else block["text"].split()
+
+    def take(self, block, now=None):
+        """These words were handled already (an instant command): don't hand them out again."""
+        now = time.monotonic() if now is None else now
+        st = self.blocks.setdefault(block["id"], {"text": "", "changed": now, "said": [], "name": block["name"]})
+        st["said"] += fresh(st["said"], block["text"])
+        st["text"], st["changed"] = block["text"], now
 
     def feed(self, blocks, now=None):
         """Take a CAPTIONS_JS snapshot; return [(speaker, text)] for words finished by a pause."""

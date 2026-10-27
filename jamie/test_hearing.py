@@ -47,4 +47,24 @@ for odd in ('{"action": "show-answer"}', '{"action": "control:show-answer"}', '{
     assert (v["action"], v["control"]) == ("control", "show-answer"), v
 v = asyncio.run(says('{"action": "none", "answer": "The capital of Australia is Canberra."}'))
 assert v["action"] == "request" and v["answer"], v  # an answer means it was a question for Jamie
+# Instant commands straight from live captions: short, with the name (or alone with one person), nothing more
+N = "jamie|jaime|jamey"
+for words, solo, want in [("Jamie pause", False, "pause"), ("Hey Jamie, pause the video, please.", False, "pause"),
+                          ("Okay, pause.", True, "pause"), ("Okay, pause.", False, None), ("Jaime mute it", False, "mute"),
+                          ("Yeah, can you pause this?", True, "pause"), ("I paused my video earlier", True, None),
+                          ("Jamie, pause the video and find the lyrics", False, None), ("Jamie, can you resume?", False, "play"),
+                          ("Jamie, play a video about cats", False, None), ("Jamie skip the ad", False, "skip-ad"),
+                          ("Amy, pause", False, None), ("Jamie, what's the capital of Australia?", False, None)]:
+    assert hearing.quick(words.split(), N, solo) == want, (words, solo)
+assert hearing.QUICK_TAIL.match("the video.") and hearing.QUICK_TAIL.match("please") and not hearing.QUICK_TAIL.match("and find lyrics")
+# Words handled that way aren't handed out again; words after them still are
+c = hearing.Captions()
+b = {"id": "1", "name": "Ana", "text": "Jamie pause"}
+c.feed([b], now=0)
+assert c.unsaid(b) == ["Jamie", "pause"]
+c.take(b, now=0.1)
+assert c.unsaid(b) == [] and c.feed([b], now=2) == []
+b2 = {"id": "1", "name": "Ana", "text": "Jamie pause and what's next"}
+c.feed([b2], now=2.1)
+assert c.feed([b2], now=4) == [("Ana", "and what's next")]
 print("hearing OK")

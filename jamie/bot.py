@@ -36,6 +36,7 @@ ENVIRONMENT = os.environ.get("JAMIE_ENVIRONMENT", "/environment")  # environment
 PERSONALITIES = os.environ.get("JAMIE_PERSONALITIES", "/personalities")
 TRIGGER = os.environ.get("JAMIE_TRIGGER", "/jamie")
 NAME = os.environ.get("JAMIE_NAME", "Jamie")
+NAMES = f"{re.escape(NAME.lower())}|jaime|jamey"  # how captions spell it, for instant commands (not "amy": a real name)
 PERMS = os.environ.get("JAMIE_PERMISSIONS", "full")  # full | safe
 TIMEOUT = int(os.environ.get("JAMIE_TIMEOUT", "900"))
 DEBUG = os.environ.get("JAMIE_DEBUG") == "1"
@@ -1091,6 +1092,7 @@ async def listen(page, agent):
     await captions_on(page)
     last_check = last_beat = last_skip = time.monotonic()
     live, hearing_now = {}, False  # caption text per block as of the last check; whether people are talking
+    quick_done = {}  # instant command -> when it was last done from live captions
     learned_file = os.path.join(LEARNED, "controls.json")
     learned_seen = os.path.exists(learned_file) and os.path.getmtime(learned_file)
 
@@ -1175,7 +1177,26 @@ async def listen(page, agent):
             if bool(talking) != hearing_now:
                 hearing_now = bool(talking)
                 await page.evaluate("h => window.__jamieAvatar && (window.__jamieAvatar.hearing = h)", hearing_now)
+            # Short commands ("Jamie, pause") happen the moment the captions show them: no pause, no judge
+            for b in snapshot or []:
+                if b["name"].endswith("Presentation") or (b["name"] == "You" and not TEST_AUDIO) \
+                        or (TEST_AUDIO and said_by_me(b["text"][-80:])):
+                    continue
+                words = caps.unsaid(b)
+                name = hearing.quick(words, NAMES, state.get("others") == 1)
+                if name and name in judge.controls and time.monotonic() - quick_done.get(name, 0) > 3:
+                    caps.take(b)
+                    quick_done[name] = time.monotonic()
+                    line = (b["name"], " ".join(words))
+                    transcribe([line])
+                    NOTES.add(*line)
+                    heard.append(line)
+                    log("heard", f"{line[0]}: {line[1]}", "-> instant", name)
+                    await act(page, agent, queue, "control", "", "", name, "")
             lines = caps.feed(snapshot)
+            # Meet often finishes the sentence after an instant command ("... the video."): not a new request
+            lines = [ln for ln in lines if not (time.monotonic() - max(quick_done.values(), default=0) < 4 and (
+                hearing.QUICK_TAIL.match(ln[1]) or hearing.quick(ln[1].split(), NAMES, True) in quick_done))]
             if TEST_AUDIO:  # Jamie hears itself in tests: what it says while talking isn't a request
                 mine = [ln for ln in lines if ln[0] == "You" and said_by_me(ln[1])]
                 for _, t in mine:
@@ -1255,7 +1276,7 @@ async def others_in_call(page, people):
 async def judged(judge, context, batch, state, people, page):
     start = time.monotonic()
     screen = describe(await on_screen(page))
-    others = await others_in_call(page, people)
+    others = state["others"] = await others_in_call(page, people)
     verdict = await judge(context, batch, state["last_reply"], state["busy"], people, screen, others)
     log(f"judge took {time.monotonic() - start:.1f}s for {len(batch)} line(s), {others} other(s) in the call")
     return verdict, batch
