@@ -73,7 +73,10 @@ class Captions:
 JUDGE_PROMPT = """You listen to a Google Meet call for {name}, an AI assistant in the call. Speech
 comes from live captions, so expect recognition errors: "{name}" often comes through as a
 similar-sounding word or name ("Amy", "Jaime", "Jamey", "Jay me", "Jammy"). If that name isn't one
-of the people in the call, it's {name}. Decide whether the NEW lines ask {name} to do something.
+of the people in the call, it's {name}. Captions also turn commands into the past tense: "{name}
+showed the answer", "{name} paused it", "{name} revealed it" right after the name are almost always
+the commands "show the answer", "pause it", "reveal it". Decide whether the NEW lines ask {name} to do
+something.
 
 - "request": someone asks {name} a question ("Jamie, what's the capital of Peru?", "Jamie, how
   does this work?") or asks it to do, find, show, explain, build, check or change something.
@@ -88,7 +91,10 @@ of the people in the call, it's {name}. Decide whether the NEW lines ask {name} 
   screen: "play that Guardians of the Galaxy video" is "open" with arg the matching title from Visible,
   not a new search. Always prefer it over "request" when it fits, however it's phrased: "can you
   pause?", "stop the video", "hold on, pause it" are all the control "pause"; "scroll down so I can
-  see" is "scroll-down". Use "request" only when it needs more than that one control.
+  see" is "scroll-down". Captions often hear a command as past tense: "Jamie showed the answer" is
+  the control for showing the answer, "Jamie paused it" is "pause", "Jamie revealed it" is the reveal
+  control. Use "request" when it needs more than that one control ("pause it and then find the
+  lyrics" is a request).
 - "stop_sharing": they want {name} to stop sharing its screen. "reset": start over with a fresh
   memory. "leave": they want {name} to leave the call.
 - "none": everything else, including talking ABOUT {name} rather than to it, and small talk.

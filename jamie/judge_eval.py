@@ -18,6 +18,12 @@ YOUTUBE = bot.describe({
 WIKI = bot.describe({"url": "https://en.wikipedia.org/wiki/Octopus", "heading": "Octopus",
                      "items": ["Anatomy", "Intelligence", "Evolution", "Main page", "Random article"]})
 
+CARDS = "Shared tab: Solar System (file:///workspace/cards.html)\nVisible: (nothing clickable)"
+TRIVIA = "Shared tab: SPACE TRIVIA (file:///workspace/game.html)\nVisible: (nothing clickable)"
+ROOM_CONTROLS = {"show-answer": "show the answer, flip the card, what's the answer",
+                 "next-card": "next card, next question, go on to the next flashcard",
+                 "reveal-answer": "reveal the answer, what was the answer, show the answer"}
+
 # (what was said, speakers in the call, what's on screen, expected action[:control])
 CASES = [
     # Questions and requests that need the agent
@@ -55,13 +61,18 @@ CASES = [
     ("I think the API should return JSON", ["Gabe", "Sam"], NOTHING, "none"),
     ("What is the capital of Australia? I always forget", ["Gabe"], NOTHING, "none"),
     ("I paused my video earlier", ["Gabe"], YOUTUBE, "none"),
+    # Captions turn commands into the past tense; room controls (study and fun rooms)
+    ("Jamie showed the answer.", ["Gabe"], CARDS, "control:show-answer"),
+    ("Jamie revealed the answer.", ["Gabe"], TRIVIA, "control:reveal-answer"),
+    ("Jamie next card.", ["Gabe"], CARDS, "control:next-card"),
+    ("I showed the answer to my sister yesterday", ["Gabe"], CARDS, "none"),
     # Unfinished
     ("Hey Jamie, can we build out?", ["Gabe"], NOTHING, "wait"),
 ]
 
 
 async def main():
-    judge = hearing.Judge("Jamie", bot.BUILTIN_CONTROLS)
+    judge = hearing.Judge("Jamie", {**bot.BUILTIN_CONTROLS, **ROOM_CONTROLS})
     passed, times = 0, []
     for said, people, screen, want in CASES:
         start = time.monotonic()
