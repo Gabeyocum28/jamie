@@ -1,0 +1,7 @@
+{
+  "next-item":    { "description": "next agenda item, let's move on, next topic", "keys": ["ArrowRight"] },
+  "prev-item":    { "description": "go back to the previous agenda item", "keys": ["ArrowLeft"] },
+  "start-timer":  { "description": "start the timer, resume the clock", "keys": ["s"] },
+  "pause-timer":  { "description": "pause the timer, stop the clock", "keys": ["p"] },
+  "add-time":     { "description": "add 5 minutes, give us five more minutes, extend this item", "keys": ["a"] }
+}

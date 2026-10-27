@@ -221,6 +221,7 @@ ones show up in the extension's dropdowns on their own.
   - `ROOM.md` holds the math-first rules.
   - The `Dockerfile` installs sympy, numpy, scipy and matplotlib.
   - `board.py` screen-shares LaTeX and plots.
+  - `study/`, `work/` and `fun/` add flashcards, a meeting board and a trivia game show.
 - **Personalities** (`personalities/<name>.md`): a few lines on how Jamie talks. See `hype.md`.
 - **Addons** (`addons/<name>/`): ready-made tools a room can choose to add, such as Wolfram|Alpha.
   Read **[addons/README.md](addons/README.md)**.
