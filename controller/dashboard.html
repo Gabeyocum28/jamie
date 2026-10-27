@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Jamie dashboard</title>
+  <link rel="stylesheet" href="/dashboard.css">
+  <script src="/dashboard.js" defer></script>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <p class="eyebrow">Jamie · home server</p>
+        <h1>Dashboard</h1>
+        <p class="intro">Watch Jamie's screen and check what is running on this server.</p>
+      </div>
+      <span id="connection" class="connection">Disconnected</span>
+    </header>
+
+    <form id="connect" class="panel">
+      <label for="token">Controller token</label>
+      <div class="connect-row">
+        <input id="token" type="password" autocomplete="off" required placeholder="Paste JAMIE_CONTROLLER_TOKEN">
+        <button type="submit">Connect</button>
+      </div>
+      <p class="hint">Find the token in the server's <code>.env</code>. This tab keeps it only for this browser session.</p>
+    </form>
+    <p id="message" role="status" aria-live="polite"></p>
+
+    <section aria-labelledby="login-heading">
+      <div class="section-head">
+        <div>
+          <h2 id="login-heading">Google sign-in</h2>
+          <p>Run <code>./jamie.sh google-login [name]</code> on the server, then use the screen here to sign in.</p>
+        </div>
+      </div>
+      <div id="logins" class="cards"><p class="empty">Connect to see setup screens.</p></div>
+    </section>
+
+    <section aria-labelledby="jamies-heading">
+      <div class="section-head">
+        <div>
+          <h2 id="jamies-heading">Running Jamies</h2>
+          <p>Send Jamie from the Chrome extension. New meetings appear here automatically.</p>
+        </div>
+        <button id="refresh" type="button" class="secondary">Refresh</button>
+      </div>
+      <div id="jamies" class="cards"><p class="empty">Connect to see running Jamies.</p></div>
+    </section>
+  </main>
+</body>
+</html>

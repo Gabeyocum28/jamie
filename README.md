@@ -83,6 +83,8 @@ settings:
 | `JAMIE_TIMEOUT` | Max seconds per request |
 | `JAMIE_ENV`, `JAMIE_PERSONALITY`, `JAMIE_AGENT` | Defaults for `./jamie.sh join` |
 | `JAMIE_CONTROLLER_TOKEN` | Password between the extension and the controller. It's created for you in 2.4 |
+| `JAMIE_CONTROLLER_BIND`, `JAMIE_CONTROLLER_PORT` | Host address and port for the controller API and dashboard; localhost and 7070 by default |
+| `JAMIE_BIND`, `JAMIE_HOST` | Host address for Jamie's screen/app ports and the hostname returned in their links; localhost by default |
 
 ### 2.2 Log in to the agent(s)
 
@@ -112,6 +114,9 @@ Jamie gets a copy when it starts.
 
 ### 2.3 Log in to Jamie's Google account
 
+If Jamie runs on a home server, follow [Home server setup](#26-home-server-setup) first so you can
+watch this sign-in screen from your laptop.
+
 ```bash
 ./jamie.sh google-login
 ```
@@ -140,6 +145,8 @@ up signed out, run the same `google-login` again.
 ```
 
 Leave it running in its own terminal. The first run creates `JAMIE_CONTROLLER_TOKEN` in `.env`.
+The dashboard is at http://localhost:7070/ by default. Enter the controller token there to see
+active Google sign-in screens and running Jamies.
 Find it with:
 
 ```bash
@@ -160,6 +167,43 @@ The extension isn't in the Chrome Web Store. Load it from this repo:
 
 The dropdowns should now fill in. After pulling changes to `extension/`, click the reload arrow on
 the Jamie card in `chrome://extensions`.
+
+### 2.6 Home server setup
+
+The controller and Jamie containers can run on an always-on home server. Your laptop runs the
+extension and opens the dashboard; Jamie joins Meet from the server. Install Tailscale on both
+devices and use the server's Tailscale IPv4 address for the settings below.
+
+1. Clone this repo onto the server, install Docker there, and create `.env` from `.env.example`.
+   Set up the agent login on the server with `./jamie.sh agent-login ...` or an API key in `.env`.
+2. Set these values in the server's `.env`, replacing the example IP with its Tailscale IPv4 address:
+
+   ```dotenv
+   JAMIE_CONTROLLER_BIND=100.101.102.103
+   JAMIE_CONTROLLER_PORT=7070
+   JAMIE_BIND=100.101.102.103
+   JAMIE_HOST=100.101.102.103
+   ```
+
+   `JAMIE_CONTROLLER_BIND` publishes the API and dashboard. `JAMIE_BIND` publishes each Jamie's
+   screen and app ports, and `JAMIE_HOST` is the address in their links. Keep `JAMIE_HOST` as a
+   hostname or IP only, without `http://` or a port.
+3. Run `./jamie.sh controller` on the server. On your laptop, open
+   `http://100.101.102.103:7070/` and enter the `JAMIE_CONTROLLER_TOKEN` from the server's `.env`.
+4. In a second server terminal or SSH session, run `./jamie.sh google-login`. The dashboard's
+   **Google sign-in** section shows its live screen. Select **View screen**, sign in, then close
+   the Chromium window to save the account. Repeat with a name for each additional Google account.
+5. Install the extension on your laptop. In its Settings, set the controller URL to
+   `http://100.101.102.103:7070` and paste the same token. The extension's **Watch screen** link
+   and the dashboard both open screens hosted on the server.
+
+The dashboard lists running Jamies, their status, and live noVNC screens. The login screen and
+Jamies' screen/app ports use HTTP inside the encrypted Tailscale connection. Restrict access to
+the server and its published ports to trusted tailnet devices with Tailscale access controls.
+The noVNC viewer itself has no password. Do not forward these ports from your router to the
+public internet. Jamie's Google profiles, agent logins, notes and saved files live in Docker
+volumes on the server; back up the volumes you want to keep. Run `./jamie.sh files` on the server
+to copy saved files out of a room's volume.
 
 ## 3. Use it
 
@@ -304,7 +348,8 @@ jamie/
   test_show.py          self-check: screen sharing against a fake Meet page
 controller/
   server.py             the API the extension calls: builds images, starts and stops Jamies,
-                        hands out Google accounts
+                        hands out Google accounts and serves the dashboard
+  dashboard.html/css/js  lists sessions and opens their noVNC screens
   test_server.py        self-check: request validation
   Dockerfile            the controller's image (Python and the Docker CLI)
 extension/              the Chrome extension (manifest, popup.html, popup.js)
@@ -393,6 +438,7 @@ Docker things this creates on your machine:
 - **Containers can't touch each other.** Each Jamie is its own container, and the copy of the agent
   logins inside it is deleted when it leaves. Only the controller can reach Docker; Jamies can't.
 - **The controller token is a password.** Anyone with it who can reach the controller can start
-  Jamies on your subscriptions. The controller only listens on your own machine (localhost).
+  Jamies on your subscriptions. By default the controller only listens on localhost. A home server
+  setup can publish it on a private Tailscale address; limit access to trusted devices.
 - **Secrets stay out of git.** `.env` files (the main one and each room's) are gitignored. Never
   commit a key.

@@ -7,10 +7,12 @@ Google ends sessions whose cookies get replayed from stale copies.
 
   GET    /options        environments, personalities, agents (for the extension's dropdowns)
   GET    /jamies         running Jamies with their screen and app links
+  GET    /logins         active Google sign-in screens
   POST   /jamies         {"meet_url", "env", "personality", "agent"} -> starts one
   DELETE /jamies/<id>    stops it (it drops out of the call)
 
-Every request needs "Authorization: Bearer $JAMIE_CONTROLLER_TOKEN".
+API requests need "Authorization: Bearer $JAMIE_CONTROLLER_TOKEN". The dashboard's
+static files are public to devices that can reach the controller; API data remains protected.
 """
 import json
 import os
@@ -24,7 +26,7 @@ from urllib.parse import urlsplit
 ROOT = os.environ.get("JAMIE_ROOT", "/jamie")        # this repo: Dockerfile, jamie/, environments/, personalities/
 LOGINS = os.environ.get("JAMIE_LOGINS", "/logins")   # login volumes, copied into every new Jamie
 TOKEN = os.environ.get("JAMIE_CONTROLLER_TOKEN", "")
-# shortcut: ports listen on the host's localhost; on the homelab set JAMIE_BIND/JAMIE_HOST to its Tailscale IP
+# Host address for published Jamie ports and the screen/app links returned to clients.
 BIND = os.environ.get("JAMIE_BIND", "127.0.0.1")
 HOST = os.environ.get("JAMIE_HOST", "localhost")
 AGENTS = ("claude", "codex", "gemini")
@@ -184,7 +186,7 @@ def last(log_lines, marker):
 
 def info(c):
     labels = c["Config"]["Labels"]
-    port = {int(k.split("/")[0]): v[0]["HostPort"] for k, v in (c["NetworkSettings"]["Ports"] or {}).items() if v}
+    port = ports(c)
     return {
         "id": c["Name"].lstrip("/"),
         "state": c["State"]["Status"],
@@ -196,9 +198,27 @@ def info(c):
     }
 
 
+def ports(c):
+    return {int(k.split("/")[0]): v[0]["HostPort"] for k, v in (c["NetworkSettings"]["Ports"] or {}).items() if v}
+
+
 def jamies():
     ids = docker("ps", "-q", "--filter", "label=jamie=1").split()
     return [info(c) for c in json.loads(docker("inspect", *ids))] if ids else []
+
+
+def logins():
+    """Google sign-in containers launched by ./jamie.sh google-login."""
+    ids = docker("ps", "-q", "--filter", "label=jamie.login").split()
+    if not ids:
+        return []
+    result = []
+    for c in json.loads(docker("inspect", *ids)):
+        port = ports(c).get(6080)
+        if port:
+            result.append({"account": c["Config"]["Labels"]["jamie.login"],
+                           "screen": f"http://{HOST}:{port}/vnc.html"})
+    return result
 
 
 def stop(name):
@@ -208,11 +228,30 @@ def stop(name):
 
 
 class Handler(BaseHTTPRequestHandler):
+    def static(self, path):
+        files = {"/": ("dashboard.html", "text/html; charset=utf-8"),
+                 "/dashboard.js": ("dashboard.js", "text/javascript; charset=utf-8"),
+                 "/dashboard.css": ("dashboard.css", "text/css; charset=utf-8")}
+        name, content_type = files[path]
+        with open(os.path.join(os.path.dirname(__file__), name), "rb") as f:
+            data = f.read()
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; "
+                         "connect-src 'self'; frame-src http: https:; object-src 'none'; base-uri 'none'")
+        self.end_headers()
+        self.wfile.write(data)
+
     def reply(self, code, body):
         data = json.dumps(body).encode()
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
@@ -225,16 +264,20 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def handle_api(self):
+        path = self.path.split("?", 1)[0].rstrip("/") or "/"
+        if self.command == "GET" and path in ("/", "/dashboard.js", "/dashboard.css"):
+            return self.static(path)
         # (as bytes: compare_digest raises on non-ASCII text, and a bad header must just be refused)
         if not secrets.compare_digest(self.headers.get("Authorization", "").encode("utf-8", "replace"),
                                       f"Bearer {TOKEN}".encode()):
             return self.reply(401, {"error": "bad or missing token"})
-        path = self.path.rstrip("/")
         try:
             if self.command == "GET" and path == "/options":
                 return self.reply(200, options())
             if self.command == "GET" and path == "/jamies":
                 return self.reply(200, jamies())
+            if self.command == "GET" and path == "/logins":
+                return self.reply(200, logins())
             if self.command == "POST" and path == "/jamies":
                 length = int(self.headers.get("Content-Length") or 0)
                 if not 0 <= length <= 65536:

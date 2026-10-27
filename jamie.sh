@@ -2,7 +2,7 @@
 # Builds the chosen environment's image on demand and runs Jamie in a fresh container for it.
 #
 #   ./jamie.sh join <meet-url> [--env NAME] [--personality NAME] [--agent claude|codex|gemini]
-#   ./jamie.sh google-login [NAME]      sign a Google account in for Jamie (watch at localhost:6080)
+#   ./jamie.sh google-login [NAME]      sign a Google account in for Jamie (watch at JAMIE_HOST:6080)
 #   ./jamie.sh agent-login <agent>      sign an agent CLI in with your subscription
 #   ./jamie.sh debug <meet-url> [...]   join + dump Meet's DOM to workspace/<env>/meet-dump.html
 #   ./jamie.sh shell [--env NAME]       a shell inside the environment
@@ -12,13 +12,21 @@
 #   ./jamie.sh judge                    how well the judge reads requests (real model calls, ~30s)
 #   ./jamie.sh learned [--env N] [--keep]  shortcuts Jamie taught itself; --keep adds them to the room's controls.json
 #   ./jamie.sh files [--env N]          copy what Jamie kept (meeting notes, things it built) to ./files/<room>/
-#   ./jamie.sh controller               the API that starts a Jamie per meeting (localhost:7070)
+#   ./jamie.sh controller               the API and dashboard that start and watch Jamies
 set -e
 cd "$(dirname "$0")"
 [ -f .env ] || { echo "Copy .env.example to .env first."; exit 1; }
+config_value() { sed -n "s/^$1=//p" .env | tail -n1; }
 # Opt-in: JAMIE_DOCKER_PLATFORM=linux/amd64 runs Jamie under emulation (slower), for Macs where Xvfb crashes natively
-PLATFORM=$(sed -n 's/^JAMIE_DOCKER_PLATFORM=//p' .env)
+PLATFORM=$(config_value JAMIE_DOCKER_PLATFORM)
 [ -n "$PLATFORM" ] && export DOCKER_DEFAULT_PLATFORM=$PLATFORM
+JAMIE_BIND=$(config_value JAMIE_BIND); JAMIE_BIND=${JAMIE_BIND:-127.0.0.1}
+JAMIE_HOST=$(config_value JAMIE_HOST); JAMIE_HOST=${JAMIE_HOST:-localhost}
+CONTROLLER_BIND=$(config_value JAMIE_CONTROLLER_BIND); CONTROLLER_BIND=${CONTROLLER_BIND:-127.0.0.1}
+CONTROLLER_PORT=$(config_value JAMIE_CONTROLLER_PORT); CONTROLLER_PORT=${CONTROLLER_PORT:-7070}
+if [[ ! "$CONTROLLER_PORT" =~ ^[0-9]+$ ]] || (( 10#$CONTROLLER_PORT < 1 || 10#$CONTROLLER_PORT > 65535 )); then
+  echo "JAMIE_CONTROLLER_PORT must be between 1 and 65535." >&2; exit 1
+fi
 
 # --env from the args, else JAMIE_ENV in .env, else default
 ENV_NAME=$(sed -n 's/^JAMIE_ENV=//p' .env); ENV_NAME=${ENV_NAME:-default}
@@ -48,7 +56,7 @@ run() {  # run [docker flags...] -- <command...>
   # One Jamie at a time per machine: these ports are fixed.
   [ -t 0 ] && flags+=(-t)
   docker run --rm -i --init --shm-size 2g --name "jamie-$ENV_NAME" \
-    -p 127.0.0.1:6080:6080 -p 127.0.0.1:3000:3000 -p 127.0.0.1:5173:5173 -p 127.0.0.1:8000:8000 \
+    -p "$JAMIE_BIND:6080:6080" -p "$JAMIE_BIND:3000:3000" -p "$JAMIE_BIND:5173:5173" -p "$JAMIE_BIND:8000:8000" \
     --env-file .env -e JAMIE_ENV="$ENV_NAME" "${flags[@]}" --label "jamie.google=${JAMIE_GOOGLE:-main}" \
     -v "jamie-google-${JAMIE_GOOGLE:-main}:/data" -v "jamie-learned-$ENV_NAME:/learned" -v "jamie-files-$ENV_NAME:/files" \
     -v jamie-claude:/home/pwuser/.claude -v jamie-codex:/home/pwuser/.codex -v jamie-gemini:/home/pwuser/.gemini \
@@ -64,7 +72,8 @@ case "$cmd" in
   debug) run -e JAMIE_DEBUG=1 -- python3 /app/bot.py "$@" ;;
   google-login)
     [[ "${1:-main}" =~ ^[A-Za-z0-9_-]+$ ]] || { echo "Name: letters, digits, - and _ only"; exit 1; }
-    JAMIE_GOOGLE=${1:-main} run -- python3 /app/bot.py --login ;;
+    echo "Google login screen: http://$JAMIE_HOST:6080/vnc.html" >&2
+    JAMIE_GOOGLE=${1:-main} run --label "jamie.login=${1:-main}" -- python3 /app/bot.py --login ;;
   agent-login)
     case "$1" in
       claude) run -- claude ;;                       # then /login; or use CLAUDE_CODE_OAUTH_TOKEN in .env
@@ -74,7 +83,7 @@ case "$cmd" in
     esac ;;
   shell) run -- bash ;;
   test)  run -- bash -c "cd /app && python3 test_env.py && python3 test_hearing.py && python3 test_voice.py && python3 test_notes.py && python3 test_show.py && python3 test_avatar.py"
-         (cd controller && JAMIE_ROOT=.. python3 test_server.py) ;;
+         (cd controller && JAMIE_ROOT=.. python3 test_server.py && python3 test_dashboard.py) ;;
   e2e)
     if [ "$1" = all ]; then
       results=()
@@ -110,8 +119,10 @@ learned = json.loads(sys.argv[2]); json.dump({**learned, **room}, open(p, "w"), 
     fi
     docker build -q -t jamie-controller controller >/dev/null
     # shortcut: the repo is mounted, not baked in, so edits apply without a rebuild; COPY it in for the homelab
-    docker run --rm --init --name jamie-controller -p 127.0.0.1:7070:7070 \
+    echo "Jamie dashboard: http://$JAMIE_HOST:$CONTROLLER_PORT/" >&2
+    docker run --rm --init --name jamie-controller -p "$CONTROLLER_BIND:$CONTROLLER_PORT:7070" \
       -e JAMIE_CONTROLLER_TOKEN="$(sed -n 's/^JAMIE_CONTROLLER_TOKEN=//p' .env | tail -n1)" \
+      -e JAMIE_BIND="$JAMIE_BIND" -e JAMIE_HOST="$JAMIE_HOST" \
       ${PLATFORM:+-e DOCKER_DEFAULT_PLATFORM=$PLATFORM} \
       -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD:/jamie:ro" \
       -v jamie-claude:/logins/claude:ro \
