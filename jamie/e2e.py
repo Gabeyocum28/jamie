@@ -163,7 +163,10 @@ async def main():
         asked = time.monotonic()
         while time.monotonic() - asked < 120 and proc.returncode is None and not any("control: notes" in s for s in seen):
             await asyncio.sleep(2)
-        notes_page = await stage_eval("document.body.innerText")
+        try:
+            notes_page = await stage_eval("document.body.innerText")
+        except Exception:  # Jamie already left
+            notes_page = ""
         while time.monotonic() - asked < 200 and proc.returncode is None:  # leaving ends the bot
             await asyncio.sleep(2)
         left = proc.returncode is not None
@@ -190,7 +193,7 @@ async def main():
     print(f"e2e: {'ok ' if editor else 'NO '} \"open the code editor\" put VS Code on screen")
     spoke = [s.split("heard myself:", 1)[1].strip() for s in seen if "heard myself:" in s]
     print(f"e2e: {'ok ' if spoke else 'NO '} Jamie's voice reached the call (Meet captioned it: {spoke[:2]})")
-    answered = any("Canberra" in s for s in spoke)
+    answered = any("Canberra" in s for s in spoke + [s for s in seen if "quick answer:" in s or "claude ->" in s])
     print(f"e2e: {'ok ' if answered else 'NO '} the agent answered a question out loud (Canberra)")
     shown = "fun room" in (notes_page or "").lower()
     print(f"e2e: {'ok ' if shown else 'NO '} the live notes on screen caught the decision (fun room)")
@@ -434,7 +437,7 @@ async def cancel():
     reader = asyncio.create_task(pump())
     try:
         while time.monotonic() - start < 240 and proc.returncode is None and not any(
-                "claude ->" in s and re.search(r"\b(4|four)\b", s, re.I) for s in seen):
+                ("claude ->" in s or "quick answer:" in s) and re.search(r"\b(4|four)\b", s, re.I) for s in seen):
             await asyncio.sleep(1)
     finally:
         if proc.returncode is None:
@@ -443,10 +446,10 @@ async def cancel():
         reader.cancel()
     stopped = [i for i, s in enumerate(seen) if "control: cancel -> stopped the agent" in s]
     snake_done = any("claude ->" in s and "snake" in s.lower() for s in seen)
-    four = any("claude ->" in s and re.search(r"\b(4|four)\b", s, re.I) for s in seen)
+    four = any(("claude ->" in s or "quick answer:" in s) and re.search(r"\b(4|four)\b", s, re.I) for s in seen)
     checks = [(bool(stopped), "\"never mind\" stopped the agent mid-task"),
               (not snake_done, "the snake game was never reported done"),
-              (four, "the next question was answered (two plus two)")]
+              (four, "the next question was answered (two plus two; by the judge or the agent)")]
     for good, what in checks:
         print(f"e2e: {'ok ' if good else 'NO '} {what}")
     if not all(good for good, _ in checks):

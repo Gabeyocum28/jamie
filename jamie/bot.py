@@ -711,7 +711,8 @@ BUILTIN_CONTROLS = {
     "open": "click something visible on the shared screen (\"play that video\", \"open the second link\"); "
             "arg = its name exactly as listed under Visible",
     "play-video": "search YouTube and play the top video fullscreen; arg = what to search for",
-    "show": "open a website on the shared screen; arg = its full URL",
+    "show": "open a website or page on the shared screen (\"pull up the Wikipedia page for X\"); arg = its full URL, "
+            "which you can work out yourself (e.g. https://en.wikipedia.org/wiki/X)",
     "ide": "open the code editor (VS Code) on the shared screen",
     "quiet": "stop talking (Jamie stops speaking right away)",
     "notes": "show the live meeting notes (summary, decisions, action items) on the shared screen",
@@ -1093,8 +1094,10 @@ async def listen(page, agent):
             # Live caption changes (before a line is finished): barge-in and the avatar's "someone's talking"
             talking = [b for b in snapshot or [] if live.get(b["id"]) != b["text"] and not b["name"].endswith("Presentation")
                        and (b["name"] != "You" or (TEST_AUDIO and not said_by_me(b["text"][-80:])))]
+            # Barge-in needs NEW words with its name: Meet keeps re-punctuating the request Jamie is answering
+            added = [b["text"][len(os.path.commonprefix([live.get(b["id"], ""), b["text"]])):] for b in talking]
             live = {b["id"]: b["text"] for b in snapshot or []}
-            if talking and voice_lock.locked() and any(judge.wake.search(b["text"][-60:]) for b in talking):
+            if added and voice_lock.locked() and any(judge.wake.search(a) for a in added):
                 await page.evaluate("window.__jamieVoice && window.__jamieVoice.stop()")  # let them talk
                 log("Stopped talking: someone said my name.")
             if bool(talking) != hearing_now:
