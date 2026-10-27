@@ -17,7 +17,7 @@ from playwright.async_api import async_playwright
 import bot
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-TIMEOUT = 300
+TIMEOUT = 420
 
 
 def timeline(out, parts):
@@ -116,13 +116,16 @@ async def main():
     audio = "/tmp/jamie-test-request.wav"
     # The request, then a follow-up while the video is being shared (hearing once stopped during shares)
     timeline(audio, [(25, os.path.join(HERE, "test-request.wav")), (35, os.path.join(HERE, "test-followup.wav")),
-                     (30, os.path.join(HERE, "test-ide.wav")), (25, os.path.join(HERE, "test-question.wav"))])
+                     (30, os.path.join(HERE, "test-ide.wav")), (25, os.path.join(HERE, "test-question.wav")),
+                     (20, os.path.join(HERE, "test-decision.wav")), (6, os.path.join(HERE, "test-notes.wav")),
+                     (30, os.path.join(HERE, "test-leave.wav"))])
     url = await new_meeting()
     print("e2e: meeting", url, flush=True)
     proc = await asyncio.create_subprocess_exec(
         "python3", os.path.join(HERE, "bot.py"), url, env={**os.environ, "JAMIE_TEST_AUDIO": audio},
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
     seen, start, ok, labels, stayed, controls, followup, auto_fullscreen, editor = [], time.monotonic(), False, [], False, False, False, False, False
+    notes_page, left = "", False
 
     async def pump():
         async for line in proc.stdout:
@@ -156,8 +159,17 @@ async def main():
         asked = time.monotonic()
         while time.monotonic() - asked < 120 and proc.returncode is None and not any("Canberra" in s and "heard myself" in s for s in seen):
             await asyncio.sleep(2)
+        # Then a decision is made out loud, "show the meeting notes", and "you can leave now"
+        asked = time.monotonic()
+        while time.monotonic() - asked < 120 and proc.returncode is None and not any("control: notes" in s for s in seen):
+            await asyncio.sleep(2)
+        notes_page = await stage_eval("document.body.innerText")
+        while time.monotonic() - asked < 200 and proc.returncode is None:  # leaving ends the bot
+            await asyncio.sleep(2)
+        left = proc.returncode is not None
     finally:
-        proc.terminate()
+        if proc.returncode is None:  # (it has left on its own if the leave step worked)
+            proc.terminate()
         await proc.wait()
         reader.cancel()
 
@@ -180,7 +192,11 @@ async def main():
     print(f"e2e: {'ok ' if spoke else 'NO '} Jamie's voice reached the call (Meet captioned it: {spoke[:2]})")
     answered = any("Canberra" in s for s in spoke)
     print(f"e2e: {'ok ' if answered else 'NO '} the agent answered a question out loud (Canberra)")
-    stayed = stayed and bool(spoke) and answered
+    shown = "fun room" in (notes_page or "").lower()
+    print(f"e2e: {'ok ' if shown else 'NO '} the live notes on screen caught the decision (fun room)")
+    posted = [s for s in seen if "Posted the meeting notes:" in s]
+    print(f"e2e: {'ok ' if posted and left else 'NO '} \"you can leave\": posted the notes to chat and left {posted[:1]}")
+    stayed = stayed and bool(spoke) and answered and shown and bool(posted) and left
     stayed = stayed and editor
     stayed = stayed and followup and auto_fullscreen
     print(f"e2e: {'ok ' if stayed else 'NO '} still in the call and presenting 20s later")
