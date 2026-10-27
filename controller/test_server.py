@@ -35,4 +35,6 @@ assert server.status(["10:00 Opening https://meet.google.com/abc", "10:00 Clicke
 assert server.status(["Listening for '/jz7' in chat", "claude <- Gabe asked out loud: build it"]) == "working on a request"
 assert server.status(["claude <- Gabe asked out loud: build it", "claude -> Done."]) == "listening"
 assert server.status(["Listening", "Call ended or Jamie was removed."]) == "left the call"
+assert server.last(["10:00 heard Gabe: hi", "10:01 heard Ana: Jamie, pause", "claude -> Done."], " heard ") == "Ana: Jamie, pause"
+assert server.last([], " -> ") == ""
 print("controller OK")
