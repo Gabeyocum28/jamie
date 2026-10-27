@@ -225,7 +225,9 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def handle_api(self):
-        if not secrets.compare_digest(self.headers.get("Authorization", ""), f"Bearer {TOKEN}"):
+        # (as bytes: compare_digest raises on non-ASCII text, and a bad header must just be refused)
+        if not secrets.compare_digest(self.headers.get("Authorization", "").encode("utf-8", "replace"),
+                                      f"Bearer {TOKEN}".encode()):
             return self.reply(401, {"error": "bad or missing token"})
         path = self.path.rstrip("/")
         try:
@@ -234,7 +236,10 @@ class Handler(BaseHTTPRequestHandler):
             if self.command == "GET" and path == "/jamies":
                 return self.reply(200, jamies())
             if self.command == "POST" and path == "/jamies":
-                body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                length = int(self.headers.get("Content-Length") or 0)
+                if not 0 <= length <= 65536:
+                    raise ValueError("bad Content-Length")
+                body = self.rfile.read(length)
                 return self.reply(201, start(parse(body)))
             if self.command == "DELETE" and path.startswith("/jamies/"):
                 stop(path.split("/", 2)[2])
