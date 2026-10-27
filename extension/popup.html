@@ -2,49 +2,133 @@
 <meta charset="utf-8">
 <title>Jamie</title>
 <style>
-  :root { color-scheme: light dark; font: 13px system-ui, sans-serif; }
-  body { width: 320px; margin: 12px; }
-  h1 { font-size: 15px; margin: 0 0 10px; }
-  label { display: block; margin: 8px 0 2px; font-weight: 600; }
-  input, select, button { width: 100%; box-sizing: border-box; padding: 5px; font: inherit; }
-  button { margin-top: 10px; cursor: pointer; }
-  details { margin-top: 12px; }
-  #status { margin-top: 8px; min-height: 1em; }
-  .err { color: #d33; }
-  ul { padding: 0; list-style: none; }
-  li { border-top: 1px solid #8884; padding: 6px 0; }
-  li.here { font-weight: 600; }
-  li button { width: auto; margin: 4px 0 0 8px; padding: 2px 8px; }
-  #preview { width: 100%; aspect-ratio: 16 / 9; border-radius: 10px; margin-top: 8px; background: #05060c; display: block; }
-  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 8px; }
+  :root {
+    color-scheme: dark;
+    --bg: #0b0d14; --card: #141823; --card-2: #1a1f2d; --line: #262c3d; --line-2: #343c52;
+    --text: #e9ecf5; --muted: #98a0b6; --accent: #8b7bff; --accent-2: #4fc3f7;
+    --ok: #3ddc97; --err: #ff6b7d; --ring: 0 0 0 3px #8b7bff55;
+  }
+  * { box-sizing: border-box; }
+  /* on body, not :root: Chrome gives extension pages body { font-size: 75% } */
+  body { width: 360px; margin: 0; padding: 14px; background: var(--bg); color: var(--text); font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .orb { width: 30px; height: 30px; border-radius: 50%; flex: none;
+    background: radial-gradient(circle at 35% 30%, #fff8 0 8%, transparent 30%), linear-gradient(135deg, var(--accent-2), var(--accent) 55%, #d36bff);
+    box-shadow: 0 0 16px #8b7bff66; }
+  h1 { font-size: 16px; margin: 0; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); font-size: 11.5px; }
+  .pill { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 99px;
+    font-size: 11px; color: var(--muted); background: var(--card); border: 1px solid var(--line); }
+  .pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+  .pill.on { color: var(--ok); } .pill.on::before { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+  .pill.off { color: var(--err); } .pill.off::before { background: var(--err); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin-bottom: 10px; }
+  h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 0 0 8px; font-weight: 600;
+    display: flex; align-items: center; gap: 6px; }
+  label { display: block; margin: 10px 0 4px; font-size: 12px; font-weight: 500; color: var(--muted); }
+  .card > label:first-of-type, .grid label { margin-top: 0; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 8px; margin-top: 10px; }
+  input, select { width: 100%; height: 32px; padding: 0 10px; font: inherit; color: var(--text); background: var(--card-2);
+    border: 1px solid var(--line-2); border-radius: 8px; outline: none; transition: border-color .15s, box-shadow .15s; }
+  select { appearance: none; padding-right: 26px; cursor: pointer;
+    background: var(--card-2) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%2398a0b6' stroke-width='1.5'/%3E%3C/svg%3E") no-repeat right 10px center; }
+  input:hover, select:hover:not(:disabled) { border-color: #4a5370; }
+  input:focus-visible, select:focus-visible { border-color: var(--accent); box-shadow: var(--ring); }
+  select:disabled { color: var(--muted); cursor: not-allowed; opacity: .7; }
+  input::placeholder { color: #5f6780; }
+  button { font: inherit; cursor: pointer; border-radius: 8px; border: 1px solid var(--line-2); background: var(--card-2); color: var(--text);
+    padding: 6px 12px; transition: filter .15s, background .15s; }
+  button:hover:not(:disabled) { background: #232a3c; }
+  button:focus-visible, summary:focus-visible, a:focus-visible, .switch input:focus-visible + span { outline: none; box-shadow: var(--ring); }
+  button:disabled { cursor: not-allowed; opacity: .5; }
+  #start { width: 100%; height: 40px; margin: 2px 0 10px; border: 0; font-weight: 600; font-size: 14px; color: #fff;
+    background: linear-gradient(135deg, #6f5cff, #9b6bff 50%, #c86bff); box-shadow: 0 6px 18px #7b5cff40, inset 0 1px #ffffff30; }
+  #start:hover:not(:disabled) { filter: brightness(1.1); background: linear-gradient(135deg, #6f5cff, #9b6bff 50%, #c86bff); }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+  .row b { display: block; font-weight: 500; }
+  .row small { color: var(--muted); font-size: 11.5px; }
+  .switch { position: relative; flex: none; margin: 0; }
+  .switch input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+  .switch span { display: block; width: 36px; height: 20px; border-radius: 99px; background: var(--line-2); transition: background .15s; }
+  .switch span::after { content: ""; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: transform .15s; }
+  .switch input:checked + span { background: var(--accent); }
+  .switch input:checked + span::after { transform: translateX(16px); }
+  details.card { padding: 0; }
+  summary { list-style: none; cursor: pointer; padding: 11px 12px; border-radius: 12px; font-weight: 500; display: flex; align-items: center; gap: 8px; }
+  summary::-webkit-details-marker { display: none; }
+  summary::after { content: ""; margin-left: auto; width: 6px; height: 6px; border: solid var(--muted); border-width: 0 1.5px 1.5px 0; transform: rotate(45deg) translate(-2px, -2px); }
+  details[open] > summary::after { transform: rotate(-135deg) translate(-2px, -2px); }
+  summary .sub { font-weight: 400; }
+  .body { padding: 0 12px 12px; }
+  #preview { width: 100%; aspect-ratio: 16 / 9; border-radius: 10px; background: #05060c; display: block; border: 1px solid var(--line); }
+  #status { margin: -2px 2px 10px; font-size: 12px; color: var(--muted); }
+  #status:empty { display: none; }
+  #status.err { color: #ffb3bd; background: #ff6b7d14; border: 1px solid #ff6b7d40; border-radius: 8px; padding: 7px 10px; margin: 0 0 10px; }
+  .count { background: var(--card-2); border: 1px solid var(--line-2); border-radius: 99px; padding: 0 7px; font-size: 10.5px; color: var(--text); letter-spacing: 0; }
+  ul { padding: 0; margin: 0; list-style: none; }
+  li { padding: 10px; border-radius: 10px; background: var(--card-2); border: 1px solid var(--line); }
+  li + li { margin-top: 8px; }
+  li.here { border-color: #8b7bff99; box-shadow: inset 3px 0 var(--accent); }
+  .top { display: flex; align-items: center; gap: 8px; }
+  .name { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tag { font-size: 10.5px; font-weight: 600; color: var(--accent); background: #8b7bff22; padding: 1px 6px; border-radius: 99px; }
+  .meta { color: var(--muted); font-size: 11.5px; margin: 2px 0 8px; font-family: ui-monospace, Menlo, monospace; }
+  .links { display: flex; flex-wrap: wrap; gap: 6px; }
+  .links a { color: var(--text); text-decoration: none; font-size: 11.5px; padding: 3px 8px; border-radius: 6px; background: #ffffff0d; border: 1px solid var(--line-2); }
+  .links a:hover { border-color: var(--accent); }
+  .links a.watch { color: #fff; background: #8b7bff33; border-color: #8b7bff66; }
+  li button { padding: 3px 10px; font-size: 11.5px; color: var(--err); border-color: #ff6b7d55; background: transparent; }
+  li button:hover:not(:disabled) { background: #ff6b7d1a; }
+  li.empty { color: var(--muted); font-size: 12px; text-align: center; padding: 6px 0 2px; background: none; border: 0; }
+  #save { margin-top: 12px; width: 100%; }
+  code { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--text); }
 </style>
-<h1>Jamie</h1>
+<header>
+  <div class="orb" aria-hidden="true"></div>
+  <div>
+    <h1>Jamie</h1>
+    <div class="sub">AI teammate for Google Meet</div>
+  </div>
+  <span class="pill" id="conn">Not connected</span>
+</header>
 <form id="form">
-  <label for="meet">Meeting link</label>
-  <input id="meet" required placeholder="https://meet.google.com/abc-defg-hij">
-  <label for="env">Environment</label>
-  <select id="env" disabled><option>Connect in Settings first</option></select>
-  <label for="personality">Personality</label>
-  <select id="personality" disabled><option>Connect in Settings first</option></select>
-  <label for="agent">Agent</label>
-  <select id="agent" disabled><option>Connect in Settings first</option></select>
-  <details id="lookbox">
-    <summary>Look</summary>
-    <canvas id="preview" width="640" height="360" aria-label="Preview of Jamie's avatar"></canvas>
-    <div class="grid" id="looks"></div>
+  <section class="card">
+    <label for="meet">Meeting link</label>
+    <input id="meet" required placeholder="https://meet.google.com/abc-defg-hij" spellcheck="false">
+    <div class="grid">
+      <div><label for="env">Environment</label><select id="env" disabled><option>Connect in Settings first</option></select></div>
+      <div><label for="personality">Personality</label><select id="personality" disabled><option>Connect in Settings first</option></select></div>
+    </div>
+    <label for="agent">Agent</label>
+    <select id="agent" disabled><option>Connect in Settings first</option></select>
+    <div class="row">
+      <div><b id="voice-label">Voice</b><small id="voice-hint">Jamie talks in the call</small></div>
+      <label class="switch"><input id="voice" type="checkbox" role="switch" checked aria-labelledby="voice-label" aria-describedby="voice-hint"><span></span></label>
+    </div>
+  </section>
+  <details class="card" id="lookbox">
+    <summary>Look <span class="sub">design the avatar</span></summary>
+    <div class="body">
+      <canvas id="preview" width="640" height="360" aria-label="Preview of Jamie's avatar"></canvas>
+      <div class="grid" id="looks"></div>
+    </div>
   </details>
   <button id="start" disabled>Send Jamie</button>
 </form>
 <div id="status" role="status"></div>
-<h1 style="margin-top:12px">Running</h1>
-<ul id="jamies"></ul>
-<details id="settings">
+<section class="card">
+  <h2>Running <span class="count" id="count">0</span></h2>
+  <ul id="jamies"><li class="empty">Connect to see running Jamies.</li></ul>
+</section>
+<details class="card" id="settings">
   <summary>Settings</summary>
-  <label for="url">Controller URL</label>
-  <input id="url">
-  <label for="token">Token (JAMIE_CONTROLLER_TOKEN in .env)</label>
-  <input id="token" type="password">
-  <button id="save" type="button">Save</button>
+  <div class="body">
+    <label for="url">Controller URL</label>
+    <input id="url" spellcheck="false">
+    <label for="token">Token <span class="sub">(<code>JAMIE_CONTROLLER_TOKEN</code> in .env)</span></label>
+    <input id="token" type="password">
+    <button id="save" type="button">Save</button>
+  </div>
 </details>
 <script src="avatar.js"></script>
 <script type="module" src="popup.js"></script>
