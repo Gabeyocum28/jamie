@@ -1,0 +1,145 @@
+month,region,product,orders,revenue
+2025-01,North,Espresso drinks,5175,31756.11
+2025-01,North,Cold brew,1224,7694.07
+2025-01,North,Pastries,2209,9093.79
+2025-01,South,Espresso drinks,4035,25273.25
+2025-01,South,Cold brew,944,5966.63
+2025-01,South,Pastries,1784,7546.28
+2025-01,East,Espresso drinks,4619,27651.56
+2025-01,East,Cold brew,1099,7131.41
+2025-01,East,Pastries,1892,7873.67
+2025-01,West,Espresso drinks,5844,34729.0
+2025-01,West,Cold brew,1401,8924.24
+2025-01,West,Pastries,2611,11025.69
+2025-02,North,Espresso drinks,3101,18845.38
+2025-02,North,Cold brew,748,4735.62
+2025-02,North,Pastries,1395,5872.28
+2025-02,South,Espresso drinks,3750,22656.43
+2025-02,South,Cold brew,1036,6523.14
+2025-02,South,Pastries,1889,7805.66
+2025-02,East,Espresso drinks,4559,28301.8
+2025-02,East,Cold brew,1204,7688.39
+2025-02,East,Pastries,2080,8747.14
+2025-02,West,Espresso drinks,5969,36466.35
+2025-02,West,Cold brew,1787,11082.91
+2025-02,West,Pastries,2945,12398.53
+2025-03,North,Espresso drinks,4808,30502.2
+2025-03,North,Cold brew,1833,11449.82
+2025-03,North,Pastries,2402,10204.76
+2025-03,South,Espresso drinks,3809,23552.25
+2025-03,South,Cold brew,1380,8949.86
+2025-03,South,Pastries,1969,8158.05
+2025-03,East,Espresso drinks,4422,26724.25
+2025-03,East,Cold brew,1589,9928.13
+2025-03,East,Pastries,2079,8697.54
+2025-03,West,Espresso drinks,6248,38985.75
+2025-03,West,Cold brew,2059,12968.17
+2025-03,West,Pastries,3002,12105.98
+2025-04,North,Espresso drinks,4549,27694.91
+2025-04,North,Cold brew,2434,15792.39
+2025-04,North,Pastries,2402,10014.03
+2025-04,South,Espresso drinks,3569,22434.27
+2025-04,South,Cold brew,1772,11271.92
+2025-04,South,Pastries,1919,8040.33
+2025-04,East,Espresso drinks,4087,24375.21
+2025-04,East,Cold brew,2059,13060.69
+2025-04,East,Pastries,2264,9633.0
+2025-04,West,Espresso drinks,5660,34987.53
+2025-04,West,Cold brew,2794,18257.87
+2025-04,West,Pastries,2973,12632.29
+2025-05,North,Espresso drinks,4105,25214.12
+2025-05,North,Cold brew,2673,16410.82
+2025-05,North,Pastries,2412,9948.07
+2025-05,South,Espresso drinks,3389,21601.01
+2025-05,South,Cold brew,2155,13619.89
+2025-05,South,Pastries,1914,8118.06
+2025-05,East,Espresso drinks,3821,23212.1
+2025-05,East,Cold brew,2620,16942.36
+2025-05,East,Pastries,2080,8722.17
+2025-05,West,Espresso drinks,5298,31636.23
+2025-05,West,Cold brew,3540,22267.24
+2025-05,West,Pastries,3100,13070.19
+2025-06,North,Espresso drinks,4126,24871.09
+2025-06,North,Cold brew,3268,20079.53
+2025-06,North,Pastries,2312,9780.87
+2025-06,South,Espresso drinks,2925,18144.61
+2025-06,South,Cold brew,2375,15430.05
+2025-06,South,Pastries,1820,7763.09
+2025-06,East,Espresso drinks,3674,21722.55
+2025-06,East,Cold brew,3064,20175.03
+2025-06,East,Pastries,2147,8968.0
+2025-06,West,Espresso drinks,4993,29863.29
+2025-06,West,Cold brew,4189,26518.51
+2025-06,West,Pastries,2954,12209.95
+2025-07,North,Espresso drinks,3953,23497.1
+2025-07,North,Cold brew,3632,23173.17
+2025-07,North,Pastries,2477,10406.17
+2025-07,South,Espresso drinks,3066,18580.4
+2025-07,South,Cold brew,2629,16828.28
+2025-07,South,Pastries,1827,7627.37
+2025-07,East,Espresso drinks,3405,20435.33
+2025-07,East,Cold brew,3277,20691.25
+2025-07,East,Pastries,2031,8587.75
+2025-07,West,Espresso drinks,5234,30998.94
+2025-07,West,Cold brew,7964,50325.29
+2025-07,West,Pastries,2710,11549.3
+2025-08,North,Espresso drinks,4186,25571.08
+2025-08,North,Cold brew,3245,20956.9
+2025-08,North,Pastries,2297,9619.83
+2025-08,South,Espresso drinks,3114,18533.39
+2025-08,South,Cold brew,2741,17364.48
+2025-08,South,Pastries,1847,7752.16
+2025-08,East,Espresso drinks,3658,22087.11
+2025-08,East,Cold brew,3049,19395.79
+2025-08,East,Pastries,2074,8714.67
+2025-08,West,Espresso drinks,5361,33147.18
+2025-08,West,Cold brew,4152,26273.29
+2025-08,West,Pastries,2710,11598.15
+2025-09,North,Espresso drinks,4669,29820.79
+2025-09,North,Cold brew,3041,20754.9
+2025-09,North,Pastries,2402,10788.02
+2025-09,South,Espresso drinks,3433,22654.6
+2025-09,South,Cold brew,2200,15038.79
+2025-09,South,Pastries,1844,8274.13
+2025-09,East,Espresso drinks,4296,28332.8
+2025-09,East,Cold brew,2525,16394.93
+2025-09,East,Pastries,2134,9219.9
+2025-09,West,Espresso drinks,5492,35767.03
+2025-09,West,Cold brew,3399,21877.39
+2025-09,West,Pastries,2871,12672.35
+2025-10,North,Espresso drinks,4857,31133.06
+2025-10,North,Cold brew,2368,15431.28
+2025-10,North,Pastries,2314,10006.42
+2025-10,South,Espresso drinks,3564,23058.29
+2025-10,South,Cold brew,1903,12892.14
+2025-10,South,Pastries,1740,7572.41
+2025-10,East,Espresso drinks,4814,30286.9
+2025-10,East,Cold brew,2527,16715.52
+2025-10,East,Pastries,2416,10726.96
+2025-10,West,Espresso drinks,6481,40354.49
+2025-10,West,Cold brew,3104,20821.55
+2025-10,West,Pastries,2846,12186.92
+2025-11,North,Espresso drinks,5223,33950.56
+2025-11,North,Cold brew,1912,12869.47
+2025-11,North,Pastries,2340,10557.69
+2025-11,South,Espresso drinks,4135,25319.13
+2025-11,South,Cold brew,1451,9366.78
+2025-11,South,Pastries,1602,6989.92
+2025-11,East,Espresso drinks,5730,36735.24
+2025-11,East,Cold brew,1869,12323.38
+2025-11,East,Pastries,2530,11192.47
+2025-11,West,Espresso drinks,6516,41690.36
+2025-11,West,Cold brew,2348,16032.72
+2025-11,West,Pastries,2958,13101.06
+2025-12,North,Espresso drinks,5408,34992.32
+2025-12,North,Cold brew,1482,10176.91
+2025-12,North,Pastries,2311,10163.46
+2025-12,South,Espresso drinks,4388,27360.55
+2025-12,South,Cold brew,1267,8762.93
+2025-12,South,Pastries,1859,8324.72
+2025-12,East,Espresso drinks,5857,35553.18
+2025-12,East,Cold brew,1574,10564.3
+2025-12,East,Pastries,2497,10774.6
+2025-12,West,Espresso drinks,6824,43551.89
+2025-12,West,Cold brew,1951,13198.41
+2025-12,West,Pastries,2976,13525.49
