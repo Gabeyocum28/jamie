@@ -119,7 +119,8 @@ def create(req, img, google):
     env = req["env"]
     name = f"jamie-{env}-{secrets.token_hex(3)}"
     flags = ["--env-file", f"{ROOT}/.env", "--label", f"jamie.google={google}", "-v", f"jamie-google-{google}:/data",
-             "-v", f"jamie-learned-{env}:/learned"]  # shortcuts Jamie taught itself in this room
+             "-v", f"jamie-learned-{env}:/learned",  # shortcuts Jamie taught itself in this room
+             "-v", f"jamie-files-{env}:/files"]  # what's kept after calls: meeting notes, things Jamie built
     if os.path.isfile(f"{ROOT}/environments/{env}/.env"):
         flags += ["--env-file", f"{ROOT}/environments/{env}/.env"]
     for p in PORTS:

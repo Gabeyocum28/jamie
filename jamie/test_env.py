@@ -96,6 +96,16 @@ def main():
     assert "the weather somewhere" in bot.controls().values()
     out = asyncio.run(bot.control(None, "weather", "Paris; touch /tmp/pwned"))
     assert out == "weather in Paris; touch /tmp/pwned" and not os.path.exists("/tmp/pwned"), out  # arg is quoted
+
+    # The meeting's notes and transcript outlive the call
+    bot.FILES = os.path.join(root, "files")
+    assert bot.keep_meeting(0) is None  # no files volume: nothing to do
+    os.makedirs(bot.FILES)
+    write(f"{ws}/notes.md", "## Summary\n- demo")
+    write(f"{ws}/transcript.md", "\n## Meeting old\n\n[9:00] Old: bye\n\n## Meeting new\n\n[10:00] Gabe: hi\n")
+    kept = bot.keep_meeting(0)
+    assert sorted(os.listdir(kept)) == ["notes.md", "transcript.md"] and read(f"{kept}/notes.md") == "## Summary\n- demo"
+    assert read(f"{kept}/transcript.md") == "## Meeting new\n\n[10:00] Gabe: hi\n"  # only this meeting
     print("env OK")
 
 

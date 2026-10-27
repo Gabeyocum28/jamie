@@ -194,6 +194,9 @@ async def main():
     print(f"e2e: {'ok ' if answered else 'NO '} the agent answered a question out loud (Canberra)")
     shown = "fun room" in (notes_page or "").lower()
     print(f"e2e: {'ok ' if shown else 'NO '} the live notes on screen caught the decision (fun room)")
+    saved = [s for s in seen if "Saved the meeting's notes and transcript to /files/" in s]
+    print(f"e2e: {'ok ' if saved else 'NO '} the notes and transcript were kept after the call {saved[:1]}")
+    stayed = stayed and bool(saved)
     posted = [s for s in seen if "Posted the meeting notes:" in s]
     print(f"e2e: {'ok ' if posted and left else 'NO '} \"you can leave\": posted the notes to chat and left {posted[:1]}")
     stayed = stayed and bool(spoke) and answered and shown and bool(posted) and left
