@@ -165,7 +165,7 @@ the Jamie card in `chrome://extensions`.
 1. Join your Google Meet as usual.
 2. Click the Jamie icon. The meeting link is filled in. Pick the **Environment**,
    **Personality** and **Agent**. Optionally open **Look** to design its avatar: eyes, mouth,
-   color, motion and an accessory, with a live preview. Then click **Send Jamie**. The first start of a room builds its
+   color, motion and an accessory, with a live preview. Turn **Voice** off to keep Jamie silent (it still answers in chat). Then click **Send Jamie**. The first start of a room builds its
    image and can take a few minutes; after that it takes seconds.
 3. **Admit Jamie** when Meet asks. It turns on captions and posts "Jamie here. I'm listening and
    keeping a transcript." in chat. The avatar turns purple, with orbiting sparks, while Jamie works,
@@ -202,7 +202,7 @@ From the extension's **Running** list you can:
 - open apps it serves with the **:3000 / :5173 / :8000** links
 - **Stop** it
 
-The meeting you're in is shown in bold.
+The meeting you're in is marked **This meeting**.
 
 **How hearing works.** Jamie reads Meet's live captions and adds each finished line to the
 transcript. Whenever someone pauses, a fast model (Claude Haiku, kept running, ~1 second) reads the
