@@ -33,5 +33,5 @@ j = hearing.Judge("Jamie")
 j.command = lambda: ["false"]
 assert asyncio.run(j([], [("Ana", "Jaime, pull up the video")]))["action"] == "request"
 assert asyncio.run(j([], [("Ana", "the API returns JSON")]))["action"] == "none"
-assert hearing.verdict('```json\n{"action": "leave", "ack": "Bye!"}\n```') == {"action": "leave", "request": "", "ack": "Bye!", "control": "", "arg": ""}
+assert hearing.verdict('```json\n{"action": "leave", "ack": "Bye!"}\n```') == {"action": "leave", "request": "", "ack": "Bye!", "control": "", "arg": "", "answer": ""}
 print("hearing OK")

@@ -97,7 +97,9 @@ something.
   lyrics" is a request).
 - "stop_sharing": they want {name} to stop sharing its screen. "reset": start over with a fresh
   memory. "leave": they want {name} to leave the call.
-- "none": everything else, including talking ABOUT {name} rather than to it, and small talk.
+- "none": everything else, including talking ABOUT {name} rather than to it, small talk, and
+  questions people ask each other or themselves without addressing {name}, even ones you could
+  answer ("What's the capital of Australia? I always forget" is "none").
   When unsure, choose "none".
 
 "ack" is a very short, natural reply {name} says right away for request/stop_sharing/reset/leave
@@ -105,17 +107,23 @@ something.
 done ("Done", "It's fullscreen now"). Leave it empty otherwise. Each message is a new
 moment in the same call; judge only its NEW lines. {busy}
 
+For a "request" that is a quick question with a short, stable answer you are certain of (a capital
+city, simple arithmetic, a definition), also put that one-sentence answer in "answer", and {name}
+says it right away instead of starting its slower assistant. Leave "answer" empty for everything
+else: anything current (news, weather, prices, "latest"), about the screen or the meeting, needing
+a tool, or anything you aren't sure of.
+
 Instant controls (name: what it does):
 {controls}
 
-Reply with only one line of JSON: {{"action": "...", "request": "...", "control": "...", "arg": "...", "ack": "..."}}"""
+Reply with only one line of JSON: {{"action": "...", "request": "...", "control": "...", "arg": "...", "answer": "...", "ack": "..."}}"""
 
 
 def verdict(text):
     """The judge's JSON reply, even wrapped in a code fence or a sentence."""
     v = json.loads(text[text.index("{"):text.rindex("}") + 1])
     return {"action": v.get("action", "none"), "request": v.get("request") or "", "ack": v.get("ack") or "",
-            "control": v.get("control") or "", "arg": v.get("arg") or ""}
+            "control": v.get("control") or "", "arg": v.get("arg") or "", "answer": v.get("answer") or ""}
 
 
 class Judge:

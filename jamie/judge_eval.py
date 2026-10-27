@@ -84,6 +84,8 @@ async def main():
         v = await judge([], [(people[0], said)], people=people, screen=screen, busy=busy[0] if busy else "")
         times.append(time.monotonic() - start)
         got = v["action"] + (f":{v['control']}" if v["action"] == "control" else "")
+        if v.get("answer"):
+            print(f"      quick answer: {v['answer']!r}")
         ok = got == want
         passed += ok
         print(f"{'ok ' if ok else 'NO '} {times[-1]:.1f}s  {got:22} {said!r}" + ("" if ok else f"  (wanted {want})"))

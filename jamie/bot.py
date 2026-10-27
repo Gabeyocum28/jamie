@@ -935,6 +935,7 @@ async def act(page, agent, queue, action, request, ack, control_name="", arg="")
         await agent.reset()
     elif action == "request":
         await queue.put(request)
+
     return False
 
 
@@ -979,6 +980,7 @@ async def listen(page, agent):
     await chat_box(page)
     await captions_on(page)
     last_check = last_beat = last_skip = time.monotonic()
+    live, hearing_now = {}, False  # caption text per block as of the last check; whether people are talking
     learned_file = os.path.join(LEARNED, "controls.json")
     learned_seen = os.path.exists(learned_file) and os.path.getmtime(learned_file)
 
@@ -1050,6 +1052,16 @@ async def listen(page, agent):
                 last_beat = time.monotonic()
                 log(f"listening: captions {'on' if snapshot is not None else 'NOT FOUND'}, "
                     f"{len(snapshot or [])} caption block(s) on screen, busy with: {state['busy'][:60] or 'nothing'}")
+            # Live caption changes (before a line is finished): barge-in and the avatar's "someone's talking"
+            talking = [b for b in snapshot or [] if live.get(b["id"]) != b["text"] and not b["name"].endswith("Presentation")
+                       and (b["name"] != "You" or (TEST_AUDIO and not said_by_me(b["text"][-80:])))]
+            live = {b["id"]: b["text"] for b in snapshot or []}
+            if talking and voice_lock.locked() and any(judge.wake.search(b["text"][-60:]) for b in talking):
+                await page.evaluate("window.__jamieVoice && window.__jamieVoice.stop()")  # let them talk
+                log("Stopped talking: someone said my name.")
+            if bool(talking) != hearing_now:
+                hearing_now = bool(talking)
+                await page.evaluate("h => window.__jamieAvatar && (window.__jamieAvatar.hearing = h)", hearing_now)
             lines = caps.feed(snapshot)
             if TEST_AUDIO:  # Jamie hears itself in tests: what it says while talking isn't a request
                 mine = [ln for ln in lines if ln[0] == "You" and said_by_me(ln[1])]
@@ -1070,7 +1082,7 @@ async def listen(page, agent):
                 verdict, batch = judging.result()
                 judging = None
                 log("judge:", verdict)
-                if verdict["action"] in ("none", "leave") and not state["busy"]:
+                if verdict["action"] in ("none", "leave", "answer") and not state["busy"]:  # (answer: the ack was it)
                     await avatar(page, "listening")
                 if verdict["action"] == "wait" and gave_up:
                     # They stopped talking: a vague request still goes to the agent, which can ask what they meant
@@ -1085,6 +1097,14 @@ async def listen(page, agent):
                         request = f"{batch[-1][0]} asked out loud: {request}"
                     if verdict["action"] == "request":  # the agent sees what's on the shared screen too
                         request += f"\n\n(On the shared screen right now: {describe(await on_screen(page))})"
+                    if verdict["action"] == "request" and verdict.get("answer"):  # the judge knew it: no agent needed
+                        log("quick answer:", verdict["answer"])
+                        speak_soon(page, verdict["answer"])
+                        await send(page, verdict["answer"])
+                        state["last_reply"] = verdict["answer"]
+                        if not state["busy"]:
+                            await avatar(page, "listening")
+                        continue
                     if await act(page, agent, queue, verdict["action"], request, verdict["ack"], verdict["control"],
                                  verdict.get("arg", "")):
                         return
