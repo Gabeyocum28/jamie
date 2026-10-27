@@ -24,6 +24,7 @@ from urllib.parse import urlsplit
 ROOT = os.environ.get("JAMIE_ROOT", "/jamie")        # this repo: Dockerfile, jamie/, environments/, personalities/
 LOGINS = os.environ.get("JAMIE_LOGINS", "/logins")   # login volumes, copied into every new Jamie
 TOKEN = os.environ.get("JAMIE_CONTROLLER_TOKEN", "")
+DOCKER_PLATFORM = os.environ.get("JAMIE_DOCKER_PLATFORM", "")
 # shortcut: ports listen on the host's localhost; on the homelab set JAMIE_BIND/JAMIE_HOST to its Tailscale IP
 BIND = os.environ.get("JAMIE_BIND", "127.0.0.1")
 HOST = os.environ.get("JAMIE_HOST", "localhost")
@@ -85,9 +86,10 @@ def parse(body):
 
 def image(env):
     with build_lock:  # parallel starts would build the same images twice
-        docker("build", "-q", "-t", "jamie-base", ROOT)
+        platform = ["--platform", DOCKER_PLATFORM] if DOCKER_PLATFORM else []
+        docker("build", *platform, "-q", "-t", "jamie-base", ROOT)
         if os.path.isfile(f"{ROOT}/environments/{env}/Dockerfile"):
-            docker("build", "-q", "-t", f"jamie-env-{env}", f"{ROOT}/environments/{env}")
+            docker("build", *platform, "-q", "-t", f"jamie-env-{env}", f"{ROOT}/environments/{env}")
             return f"jamie-env-{env}"
     return "jamie-base"
 
@@ -122,6 +124,7 @@ def prune(keep=5):
 def create(req, img, google):
     env = req["env"]
     name = f"jamie-{env}-{secrets.token_hex(3)}"
+    platform = ["--platform", DOCKER_PLATFORM] if DOCKER_PLATFORM else []
     flags = ["--env-file", f"{ROOT}/.env", "--label", f"jamie.google={google}", "-v", f"jamie-google-{google}:/data",
              "-v", f"jamie-learned-{env}:/learned",  # shortcuts Jamie taught itself in this room
              "-v", f"jamie-files-{env}:/files"]  # what's kept after calls: meeting notes, things Jamie built
@@ -132,7 +135,7 @@ def create(req, img, google):
     for k in ("meet_url", "env", "personality", "agent"):
         flags += ["--label", f"jamie.{k}={req[k]}"]
     # shortcut: the workspace lives in the container and is deleted when Jamie leaves; add a volume per instance to keep work
-    docker("create", "--init", "--shm-size", "2g", "--name", name, "--label", "jamie=1",
+    docker("create", *platform, "--init", "--shm-size", "2g", "--name", name, "--label", "jamie=1",
            "-e", f"JAMIE_ENV={env}", "-e", f"JAMIE_LOOK={json.dumps(req['look'])}",
            "-e", f"JAMIE_VOICE={'on' if req.get('voice', True) else 'off'}", *flags, img,
            "python3", "/app/bot.py", req["meet_url"], "--env", env,

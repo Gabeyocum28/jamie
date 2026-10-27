@@ -17,6 +17,21 @@ set -e
 cd "$(dirname "$0")"
 [ -f .env ] || { echo "Copy .env.example to .env first."; exit 1; }
 
+# Xvfb crashes in arm64 containers under Docker Desktop on Apple Silicon; run Jamie's
+# meeting image under amd64 emulation there. Keep the native platform everywhere else.
+DOCKER_PLATFORM=
+if [ "$(uname -s)" = Darwin ] && [ "$(uname -m)" = arm64 ]; then
+  DOCKER_PLATFORM=linux/amd64
+fi
+
+docker_build() {
+  if [ -n "$DOCKER_PLATFORM" ]; then
+    docker build --platform "$DOCKER_PLATFORM" "$@"
+  else
+    docker build "$@"
+  fi
+}
+
 # --env from the args, else JAMIE_ENV in .env, else default
 ENV_NAME=$(sed -n 's/^JAMIE_ENV=//p' .env); ENV_NAME=${ENV_NAME:-default}
 args=("$@")
@@ -27,9 +42,9 @@ fi
 
 image() {
   echo "Building image for $ENV_NAME..." >&2
-  docker build -q -t jamie-base . >/dev/null
+  docker_build -q -t jamie-base . >/dev/null
   if [ -f "environments/$ENV_NAME/Dockerfile" ]; then
-    docker build -q -t "jamie-env-$ENV_NAME" "environments/$ENV_NAME" >/dev/null
+    docker_build -q -t "jamie-env-$ENV_NAME" "environments/$ENV_NAME" >/dev/null
     echo "jamie-env-$ENV_NAME"
   else
     echo jamie-base
@@ -37,14 +52,15 @@ image() {
 }
 
 run() {  # run [docker flags...] -- <command...>
-  local flags=() img
+  local flags=() platform=() img
   while [ "$1" != -- ]; do flags+=("$1"); shift; done; shift
   img=$(image)
+  [ -n "$DOCKER_PLATFORM" ] && platform=(--platform "$DOCKER_PLATFORM")
   mkdir -p "workspace/$ENV_NAME"
   [ -f "environments/$ENV_NAME/.env" ] && flags+=(--env-file "environments/$ENV_NAME/.env")
   # One Jamie at a time per machine: these ports are fixed.
   [ -t 0 ] && flags+=(-t)
-  docker run --rm -i --init --shm-size 2g --name "jamie-$ENV_NAME" \
+  docker run "${platform[@]}" --rm -i --init --shm-size 2g --name "jamie-$ENV_NAME" \
     -p 127.0.0.1:6080:6080 -p 127.0.0.1:3000:3000 -p 127.0.0.1:5173:5173 -p 127.0.0.1:8000:8000 \
     --env-file .env -e JAMIE_ENV="$ENV_NAME" "${flags[@]}" --label "jamie.google=${JAMIE_GOOGLE:-main}" \
     -v "jamie-google-${JAMIE_GOOGLE:-main}:/data" -v "jamie-learned-$ENV_NAME:/learned" -v "jamie-files-$ENV_NAME:/files" \
@@ -100,11 +116,26 @@ learned = json.loads(sys.argv[2]); json.dump({**learned, **room}, open(p, "w"), 
         "environments/$ENV_NAME/controls.json" "$json"
     fi ;;
   controller)
-    grep -q '^JAMIE_CONTROLLER_TOKEN=.' .env || echo "JAMIE_CONTROLLER_TOKEN=$(openssl rand -hex 24)" >> .env
+    controller_token=$(awk -F= '/^JAMIE_CONTROLLER_TOKEN=/ && length($2) { token=$2 } END { print token }' .env)
+    token_lines=$(grep -c '^JAMIE_CONTROLLER_TOKEN=' .env || true)
+    if [ "$token_lines" -ne 1 ] || [ -z "$controller_token" ]; then
+      [ -n "$controller_token" ] || controller_token=$(openssl rand -hex 24)
+      awk -v token="$controller_token" '
+        BEGIN { written = 0 }
+        /^JAMIE_CONTROLLER_TOKEN=/ {
+          if (!written) { print "JAMIE_CONTROLLER_TOKEN=" token; written = 1 }
+          next
+        }
+        { print }
+        END { if (!written) print "JAMIE_CONTROLLER_TOKEN=" token }
+      ' .env > .env.tmp
+      mv .env.tmp .env
+    fi
     docker build -q -t jamie-controller controller >/dev/null
     # shortcut: the repo is mounted, not baked in, so edits apply without a rebuild; COPY it in for the homelab
     docker run --rm --init --name jamie-controller -p 127.0.0.1:7070:7070 \
       -e JAMIE_CONTROLLER_TOKEN="$(sed -n 's/^JAMIE_CONTROLLER_TOKEN=//p' .env)" \
+      -e JAMIE_DOCKER_PLATFORM="$DOCKER_PLATFORM" \
       -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD:/jamie:ro" \
       -v jamie-claude:/logins/claude:ro \
       -v jamie-codex:/logins/codex:ro -v jamie-gemini:/logins/gemini:ro \
