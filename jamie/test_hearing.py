@@ -37,4 +37,12 @@ j.command = lambda: ["false"]
 assert asyncio.run(j([], [("Ana", "Jaime, pull up the video")]))["action"] == "request"
 assert asyncio.run(j([], [("Ana", "the API returns JSON")]))["action"] == "none"
 assert hearing.verdict('```json\n{"action": "leave", "ack": "Bye!"}\n```') == {"action": "leave", "request": "", "ack": "Bye!", "control": "", "arg": "", "answer": ""}
+# The model sometimes names the control as the action: read it as that control
+j2 = hearing.Judge("Jamie", {"show-answer": "show the answer"})
+async def says(text):
+    j2.ask = lambda prompt: asyncio.sleep(0, result=hearing.verdict(text))
+    return await j2([], [("Ana", "Jamie show the answer")])
+for odd in ('{"action": "show-answer"}', '{"action": "control:show-answer"}', '{"action": "", "control": "show-answer"}'):
+    v = asyncio.run(says(odd))
+    assert (v["action"], v["control"]) == ("control", "show-answer"), v
 print("hearing OK")

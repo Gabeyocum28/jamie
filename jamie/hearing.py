@@ -134,6 +134,9 @@ def verdict(text):
             "control": v.get("control") or "", "arg": v.get("arg") or "", "answer": v.get("answer") or ""}
 
 
+VALID = ("none", "wait", "request", "control", "stop_sharing", "reset", "leave")
+
+
 class Judge:
     """Asks a fast model whether the new lines are for Jamie. Falls back to the wake word.
 
@@ -171,7 +174,10 @@ class Judge:
             while line := await proc.stdout.readline():
                 event = json.loads(line)
                 if event.get("type") == "result":
-                    return verdict(event.get("result") or "")
+                    try:
+                        return verdict(event.get("result") or "")
+                    except ValueError as e:
+                        raise ValueError(f"not JSON: {(event.get('result') or '')[:200]!r}") from e
             raise RuntimeError("judge process ended")
         finally:
             if proc.returncode is None:
@@ -198,13 +204,20 @@ class Judge:
         try:
             async with self.lock:
                 verdict = await asyncio.wait_for(self.ask(prompt), self.timeout)
-            if verdict["control"] in ("leave", "stop_sharing", "reset"):  # it sometimes puts these in the wrong field
+            action = verdict["action"].removeprefix("control:")
+            if action in self.controls:  # it sometimes answers with the control's name as the action
+                verdict["action"], verdict["control"] = "control", action
+            elif action not in VALID and verdict["control"] in self.controls:  # ...or names the control, no action
+                verdict["action"] = "control"
+            if verdict["control"] in ("leave", "stop_sharing", "reset"):  # ...or these in the wrong field
                 verdict["action"], verdict["control"] = verdict["control"], ""
-            assert verdict["action"] in ("none", "wait", "request", "control", "stop_sharing", "reset", "leave")
+            if verdict["action"] not in VALID:
+                raise ValueError(f"unexpected verdict {verdict}")
             if verdict["action"] == "control" and verdict["control"] not in self.controls:
                 verdict["action"] = "request"  # not a control we have: let the agent figure it out
             return verdict
-        except Exception:  # no Claude login, timeout, bad output: fall back to the wake word
+        except Exception as e:  # no Claude login, timeout, bad output: fall back to the wake word
+            print(time.strftime("%H:%M:%S"), "judge failed, using the wake word:", repr(e)[:300], flush=True)
             await self.close()  # out of sync now; the next call starts a fresh one
             text = " ".join(t for _, t in new)
             if self.wake.search(text):

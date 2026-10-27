@@ -9,6 +9,7 @@ import asyncio
 import os
 import re
 import sys
+import tempfile
 import time
 import wave
 
@@ -30,6 +31,19 @@ def timeline(out, parts):
                 gap = int(pause * r.getframerate()) * r.getsampwidth() * r.getnchannels()
                 w.writeframes(b"\0" * gap + r.readframes(r.getnframes()))
         w.writeframes(b"\0" * (120 * 16000 * 2))
+
+
+WORKSPACE = bot.WORKSPACE  # the bot's working folder in the current scenario
+
+
+async def launch(url, audio, **env):
+    """Start the bot on a fresh, temporary workspace: runs don't see each other's files (or the user's)."""
+    global WORKSPACE
+    WORKSPACE = tempfile.mkdtemp(prefix="jamie-e2e-")
+    return await asyncio.create_subprocess_exec(
+        "python3", os.path.join(HERE, "bot.py"), url,
+        env={**os.environ, "JAMIE_TEST_AUDIO": audio, "JAMIE_WORKSPACE": WORKSPACE, **env},
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
 
 
 async def new_meeting():
@@ -121,9 +135,7 @@ async def main():
                      (30, os.path.join(HERE, "test-leave.wav"))])
     url = await new_meeting()
     print("e2e: meeting", url, flush=True)
-    proc = await asyncio.create_subprocess_exec(
-        "python3", os.path.join(HERE, "bot.py"), url, env={**os.environ, "JAMIE_TEST_AUDIO": audio},
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+    proc = await launch(url, audio)
     seen, start, ok, labels, stayed, controls, followup, auto_fullscreen, editor = [], time.monotonic(), False, [], False, False, False, False, False
     notes_page, left = "", False
 
@@ -235,9 +247,7 @@ async def room(name):
                      (12, os.path.join(HERE, f"test-{name}-2.wav"))])
     url = await new_meeting()
     print("e2e: meeting", url, flush=True)
-    proc = await asyncio.create_subprocess_exec(
-        "python3", os.path.join(HERE, "bot.py"), url, env={**os.environ, "JAMIE_TEST_AUDIO": audio},
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+    proc = await launch(url, audio)
     seen, checks = [], []
 
     async def pump():
@@ -286,9 +296,7 @@ async def learn():
     timeline(audio, [(25, os.path.join(HERE, "test-learn.wav")), (60, os.path.join(HERE, "test-coin.wav"))])
     url = await new_meeting()
     print("e2e: meeting", url, flush=True)
-    proc = await asyncio.create_subprocess_exec(
-        "python3", os.path.join(HERE, "bot.py"), url, env={**os.environ, "JAMIE_TEST_AUDIO": audio},
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+    proc = await launch(url, audio)
     seen = []
 
     async def pump():
@@ -328,10 +336,8 @@ async def vibe():
     timeline(audio, [(25, os.path.join(HERE, "test-vibe.wav"))])
     url = await new_meeting()
     print("e2e: meeting", url, flush=True)
-    before = set(os.listdir(bot.WORKSPACE))
-    proc = await asyncio.create_subprocess_exec(
-        "python3", os.path.join(HERE, "bot.py"), url, env={**os.environ, "JAMIE_TEST_AUDIO": audio},
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+    began = time.time()
+    proc = await launch(url, audio)
     seen, editor_seen, start = [], False, time.monotonic()
 
     async def pump():
@@ -367,9 +373,12 @@ async def vibe():
             proc.terminate()
         await proc.wait()
         reader.cancel()
-    made = sorted(set(os.listdir(bot.WORKSPACE)) - before)
+    # files written during this run (the workspace is kept between runs, so not just new names)
+    made = sorted(os.path.relpath(os.path.join(d, f), WORKSPACE) for d, _, fs in os.walk(WORKSPACE) for f in fs
+                  if os.path.getmtime(os.path.join(d, f)) > began and f.endswith((".html", ".js", ".css", ".py"))
+                  and not f.startswith("notes") and "/." not in d)
     checks = [(editor_seen, "VS Code was on screen while it worked"),
-              (bool([f for f in made if not f.startswith(".")]), f"it wrote the app in the workspace {made}"),
+              (bool(made), f"it wrote the app in the workspace {made[:4]}"),
               (bool(app_url) and ("localhost:" in app_url or app_url.startswith("file:")) and "8443" not in app_url,
                f"the finished app is what's shared now ({app_url})"),
               (str(result).startswith("reacted"), f"the app works when used: {str(result)[:120]!r}")]
@@ -386,9 +395,7 @@ async def click_on_screen():
     timeline(audio, [(25, os.path.join(HERE, "test-open-0.wav")), (25, os.path.join(HERE, "test-open-1.wav"))])
     url = await new_meeting()
     print("e2e: meeting", url, flush=True)
-    proc = await asyncio.create_subprocess_exec(
-        "python3", os.path.join(HERE, "bot.py"), url, env={**os.environ, "JAMIE_TEST_AUDIO": audio},
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+    proc = await launch(url, audio)
     seen, start = [], time.monotonic()
 
     async def pump():
@@ -424,9 +431,7 @@ async def cancel():
                      (20, os.path.join(HERE, "test-cancel-2.wav"))])
     url = await new_meeting()
     print("e2e: meeting", url, flush=True)
-    proc = await asyncio.create_subprocess_exec(
-        "python3", os.path.join(HERE, "bot.py"), url, env={**os.environ, "JAMIE_TEST_AUDIO": audio},
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+    proc = await launch(url, audio, JAMIE_VOICE="off")  # (one test mic: speech would overlap "never mind")
     seen, start = [], time.monotonic()
 
     async def pump():
