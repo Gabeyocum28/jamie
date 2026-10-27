@@ -1,6 +1,6 @@
 // Popup: picks a room, personality and agent, and asks the controller to send a Jamie into the meeting.
 const $ = (id) => document.getElementById(id);
-const cfg = await chrome.storage.local.get({ url: "http://localhost:7070", token: "", env: "", personality: "", agent: "" });
+const cfg = await chrome.storage.local.get({ url: "http://localhost:7070", token: "", env: "", personality: "", agent: "", look: {} });
 
 async function api(method, path, body) {
   const r = await fetch(cfg.url.replace(/\/$/, "") + path, {
@@ -66,7 +66,7 @@ $("form").onsubmit = async (e) => {
   $("start").disabled = true;
   status("Starting… the first run of a room builds its image and can take a few minutes.");
   try {
-    const j = await api("POST", "/jamies", { meet_url: $("meet").value.trim(), ...pick });
+    const j = await api("POST", "/jamies", { meet_url: $("meet").value.trim(), ...pick, look: cfg.look });
     status(`${j.id} is joining. Admit it in Meet.`);
     await list();
   } catch (err) {
@@ -86,6 +86,26 @@ $("save").onclick = async () => {
   await chrome.storage.local.set({ url: cfg.url, token: cfg.token });
   load();
 };
+
+// Look: one dropdown per part, a live preview that cycles through Jamie's states
+const avatar = JamieAvatar.create($("preview"), cfg.look);
+const pretty = (s) => s[0].toUpperCase() + s.slice(1).replace("-", " ");
+for (const [part, choices] of Object.entries(JamieAvatar.OPTIONS)) {
+  const label = Object.assign(document.createElement("label"), { htmlFor: `look-${part}`, textContent: pretty(part) });
+  const select = Object.assign(document.createElement("select"), { id: `look-${part}` });
+  choices.forEach((c) => select.add(new Option(pretty(c), c, false, c === avatar.look[part])));
+  select.onchange = () => {
+    avatar.look[part] = select.value;
+    cfg.look = { ...avatar.look };
+    chrome.storage.local.set({ look: cfg.look });
+  };
+  const cell = document.createElement("div");
+  cell.append(label, select);
+  $("looks").append(cell);
+}
+setInterval(avatar.draw, 1000 / 30);
+const states = ["listening", "thinking", "talking"];
+setInterval(() => (avatar.state = states[(states.indexOf(avatar.state) + 1) % 3]), 3000);
 
 $("url").value = cfg.url;
 $("token").value = cfg.token;

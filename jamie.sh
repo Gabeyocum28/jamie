@@ -7,6 +7,7 @@
 #   ./jamie.sh debug <meet-url> [...]   join + dump Meet's DOM to workspace/<env>/meet-dump.html
 #   ./jamie.sh shell [--env NAME]       a shell inside the environment
 #   ./jamie.sh test                     run the self-checks
+#   ./jamie.sh e2e                      end-to-end check in a real Meet (Jamie hosts it alone; ~2 min)
 #   ./jamie.sh controller               the API that starts a Jamie per meeting (localhost:7070)
 set -e
 cd "$(dirname "$0")"
@@ -65,8 +66,9 @@ case "$cmd" in
       *)      echo "usage: ./jamie.sh agent-login claude|codex|gemini"; exit 1 ;;
     esac ;;
   shell) run -- bash ;;
-  test)  run -- bash -c "cd /app && python3 test_env.py && python3 test_show.py"
+  test)  run -- bash -c "cd /app && python3 test_env.py && python3 test_hearing.py && python3 test_show.py && python3 test_avatar.py"
          (cd controller && JAMIE_ROOT=.. python3 test_server.py) ;;
+  e2e)   run -- python3 /app/e2e.py ;;
   controller)
     grep -q '^JAMIE_CONTROLLER_TOKEN=.' .env || echo "JAMIE_CONTROLLER_TOKEN=$(openssl rand -hex 24)" >> .env
     docker build -q -t jamie-controller controller >/dev/null
@@ -77,5 +79,5 @@ case "$cmd" in
       -v jamie-claude:/logins/claude:ro \
       -v jamie-codex:/logins/codex:ro -v jamie-gemini:/logins/gemini:ro \
       jamie-controller ;;
-  *)     sed -n '4,10p' "$0" | sed 's/^# //' ;;
+  *)     sed -n '4,11p' "$0" | sed 's/^# //' ;;
 esac

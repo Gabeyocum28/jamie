@@ -139,10 +139,22 @@ the Jamie card in `chrome://extensions`.
 
 1. Join your Google Meet as usual.
 2. Click the Jamie icon. The meeting link is filled in. Pick the **Environment**,
-   **Personality** and **Agent**, then click **Send Jamie**. The first start of a room builds its
+   **Personality** and **Agent**. Optionally open **Look** to design its avatar: eyes, mouth,
+   color, motion and an accessory, with a live preview. Then click **Send Jamie**. The first start of a room builds its
    image and can take a few minutes; after that it takes seconds.
-3. **Admit Jamie** when Meet asks. It posts "Jamie here." in chat.
-4. Talk to it in the Meet chat by typing the trigger, then your request:
+3. **Admit Jamie** when Meet asks. It turns on captions and posts "Jamie here. I'm listening and
+   keeping a transcript." in chat. Its camera shows an animated face. The face turns
+   purple, with orbiting dots, while Jamie is working on something.
+4. **Talk to it out loud**, the way you'd talk to a teammate:
+   - "Hey Jamie, pull up the new MrBeast video."
+   - "Jamie, can you skip this ad?"
+   - "Make the chart red and blue instead." (a follow-up right after Jamie answered doesn't need its name)
+   - "Jamie, you can leave."
+
+   Talking *about* Jamie ("Jamie is a fun tool we built") is ignored. It answers in chat for now;
+   speaking back is coming. Everything said goes into `transcript.md` in its working folder, so
+   "Jamie, write up notes from this meeting" works too.
+5. Or type in the Meet chat: the trigger, then your request:
 
 ```
 /jamie pull up a video of a cat playing piano and make it fullscreen
@@ -161,6 +173,19 @@ From the extension's **Running** list you can:
 - **Stop** it
 
 The meeting you're in is shown in bold.
+
+**How hearing works.** Jamie reads Meet's live captions, with speaker names, and adds each
+finished sentence to the transcript. Every time someone pauses, a fast model (Claude Haiku, about
+4 seconds) reads the new lines and decides one of these:
+- someone is asking Jamie for something
+- they're still mid-request
+- they want it to stop sharing, start over, or leave
+- none of the above
+
+Requests get rewritten into one clear instruction for the main agent, such as "Change the chart
+colors to red and blue". The judge uses the Claude login even if the main agent is Codex or
+Gemini. Without a Claude login, it falls back to reacting to the name "Jamie". The code is in
+`jamie/hearing.py`.
 
 Each Jamie keeps its conversation for as long as it's in the call. Files it makes are deleted when
 it leaves. Anything worth keeping goes in the room folder, or ask Jamie to push it somewhere.
@@ -217,6 +242,12 @@ start.sh                starts the virtual screen and the web viewer (noVNC) in 
 jamie/
   bot.py                the bot: joins Meet, reads chat, sets up the room, runs the agent,
                         replies, screen-shares (--show)
+  hearing.py            captions -> transcript, and the Haiku judge that decides when Jamie
+                        is being talked to
+  test_hearing.py       self-check: caption handling and the judge's fallback
+  e2e.py                end-to-end check in a real Meet (./jamie.sh e2e)
+  test-request.wav      the recorded request e2e.py plays through Jamie's microphone
+  test_avatar.py        self-check: the avatar animates, also behind a screen share
   test_env.py           self-check: rooms, personalities, agent setup
   test_show.py          self-check: screen sharing against a fake Meet page
 controller/
@@ -225,6 +256,8 @@ controller/
   test_server.py        self-check: request validation
   Dockerfile            the controller's image (Python and the Docker CLI)
 extension/              the Chrome extension (manifest, popup.html, popup.js)
+  avatar.js             Jamie's camera: a glowing orb with a face. The popup uses it for the live
+                        preview, and the image copies it in so the bot can show it in Meet
 environments/           rooms; each folder is one. README.md explains everything about them
   default/              general-purpose room
   math/                 math room: the example to copy
@@ -253,7 +286,8 @@ Docker things this creates on your machine:
 ./jamie.sh join <meet-url> [--env NAME] [--personality NAME] [--agent NAME]
 ./jamie.sh debug <meet-url> [...]     join and dump Meet's page to workspace/<env>/meet-dump.html
 ./jamie.sh shell [--env NAME]         a shell inside a room's image
-./jamie.sh test                       run all self-checks
+./jamie.sh test                       run all self-checks (fast, no real call)
+./jamie.sh e2e                        end-to-end check in a real Meet (~2 min, see below)
 ```
 
 ## 7. When something goes wrong
@@ -272,7 +306,11 @@ Docker things this creates on your machine:
 - **Agent says it isn't logged in**: redo that agent's step in 2.2.
 - **See what a Jamie is doing**: `docker logs -f <id>`, with the id from the extension's list or
   `docker ps`.
-- **Make sure the core still works**: `./jamie.sh test`.
+- **Make sure the core still works**: `./jamie.sh test`. For the real thing, `./jamie.sh e2e`. Jamie
+  starts its own Meet and joins it alone, and its microphone plays a recorded request: "Hey Jamie,
+  pull up a YouTube video of a cat playing piano and share it". The test passes only when Meet
+  shows Jamie presenting, so it covers captions, the judge, the agent and screen sharing for real.
+  It needs `google-login` and an agent login, and the account can't be running another Jamie.
 
 ## Security
 

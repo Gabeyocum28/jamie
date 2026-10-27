@@ -15,7 +15,12 @@ def rejects(body, why):
 
 ok = server.parse(json.dumps({"meet_url": "https://meet.google.com/abc-defg-hij?authuser=1", "personality": "hype"}))
 assert ok == {"meet_url": "https://meet.google.com/abc-defg-hij", "env": "default",
-              "personality": "hype", "agent": "claude"}, ok
+              "personality": "hype", "agent": "claude", "look": {}}, ok
+look = {"eyes": "x", "mouth": "cat", "color": "gold", "motion": "bounce", "accessory": "party-hat"}
+assert server.parse(json.dumps({"meet_url": "https://meet.google.com/abc-defg-hij", "look": look}))["look"] == look
+rejects({"meet_url": "https://meet.google.com/abc-defg-hij", "look": {"eyes": "<script>"}}, "look")
+rejects({"meet_url": "https://meet.google.com/abc-defg-hij", "look": {"hat": "crown"}}, "look")
+rejects({"meet_url": "https://meet.google.com/abc-defg-hij", "look": "crown"}, "look")
 assert server.parse(json.dumps({"meet_url": "https://meet.google.com/meet/siy-jvzm-ryq"}))["meet_url"] == \
     "https://meet.google.com/siy-jvzm-ryq"
 rejects({"meet_url": "https://evil.com/abc-defg-hij"}, "meet_url")

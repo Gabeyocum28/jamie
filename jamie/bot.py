@@ -13,11 +13,18 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import time
 
+from difflib import SequenceMatcher
+from urllib.parse import urlencode, urlsplit
+
 from playwright.async_api import async_playwright, TimeoutError as PWTimeout
+
+import cdp_filter
+import hearing
 
 PROFILE = os.environ.get("JAMIE_PROFILE", "/data/chrome-profile")
 WORKSPACE = os.environ.get("JAMIE_WORKSPACE", "/workspace")        # workspace/<env> on the host
@@ -34,18 +41,33 @@ MAX_CHUNKS = 8
 def core_prompt(cwd):
     # Shared by every environment and personality: how Jamie works in a call.
     return (
-        f"You are {NAME}, an AI agent sitting in a Google Meet call. People talk to you through the "
-        f"meeting chat. Your working directory is {cwd}; build and run things there. If you start "
+        f"You are {NAME}, an AI agent sitting in a Google Meet call. People talk to you out loud or in "
+        "the meeting chat. Spoken requests reach you through live captions, which can mishear words: "
+        "read them generously. The meeting transcript so far is in transcript.md; use it for context, "
+        f"notes and summaries. Your working directory is {cwd}; build and run things there. If you start "
         "a web server, bind 0.0.0.0 on port 3000, 5173 or 8000 and run it in the background (nohup ... &) "
         "so the user can open http://localhost:<port>. Reply in plain text, no markdown, as short as "
         "possible (under 1200 characters): say what you did and where to find it.\n"
         "You control your own Chromium with the browser tools. One tab is the Meet call: never navigate, "
-        "close or click in it. To put something on screen for the call, run "
+        "close or click in it (it's hidden from your browser tools). Open your own tabs to browse. Don't use "
+        "Google Search or Google Images in the browser: they show captchas to automated browsers; use DuckDuckGo, "
+        "Wikipedia or Wikimedia Commons. To put something on screen for the call, run "
         "`python3 /app/bot.py --show <url>`: it opens the url in a 'stage' tab and screen-shares it with "
-        "sound (run it again to switch, `--show off` to stop). Then select the stage tab with the browser "
+        "sound (run it again to switch, `--show off` to stop). For YouTube, `python3 /app/bot.py --play "
+        "'<what to search>'` finds the top video, shares it and makes it fullscreen in one step; ads are "
+        "skipped automatically while it plays. Both only return once Meet "
+        "confirms the share, so don't check it again afterwards. To control the video being shared, run "
+        "`python3 /app/bot.py --video play|pause|fullscreen|exit-fullscreen|skip-ad|mute|unmute`: one step, "
+        "much faster than clicking through the page. People are waiting in a live call: use "
+        "as few steps as possible and reply as soon as it's done. Then select the stage tab with the browser "
         "tools and do whatever people ask there: play/pause, fullscreen, skip ads, scroll, click, search the "
         "site. Find links yourself with your web search tool, the browser, or the site's own search; never "
         "ask people for a URL. "
+        "When people want to build something or 'vibe code', they mean: build it live, in front of them. Run "
+        "`python3 /app/bot.py --ide` to put VS Code on screen (it shows your working directory), write the code "
+        "there, open the file you're writing with `python3 /app/bot.py --ide <file>` so they can watch, then run it "
+        "and --show the result. If they ask about something on the shared screen ('that video', 'this link'), "
+        "click it in the stage tab rather than searching again. "
         "Don't tell people you can't do something on the computer or in the browser: try, and if one way "
         "fails, try another."
     )
@@ -65,6 +87,10 @@ CHROME_ARGS = [
     "--autoplay-policy=no-user-gesture-required",                # videos start without a click
     "--remote-debugging-port=9222",
 ]
+# End-to-end test (e2e.py): Jamie's microphone plays this recording, and Jamie listens to itself
+TEST_AUDIO = os.environ.get("JAMIE_TEST_AUDIO")
+if TEST_AUDIO:
+    CHROME_ARGS.append(f"--use-file-for-fake-audio-capture={TEST_AUDIO}")
 
 # Meet tags each chat message with data-message-id. If Google changes this, run with
 # JAMIE_DEBUG=1, open meet-dump.html, and update this selector.
@@ -120,6 +146,16 @@ async def click_first(page, patterns, timeout=3000):
     return None
 
 
+async def in_call(page):
+    """Meet's Leave button is on the page. A plain DOM check on purpose: get_by_role skips elements
+    that a dialog hides from screen readers, which once made a share dialog look like the call ending."""
+    try:
+        return await asyncio.wait_for(
+            page.evaluate("""() => !!document.querySelector('button[aria-label*="leave call" i]')"""), 5)
+    except Exception:
+        return False
+
+
 def leave_button(page):
     return page.get_by_role("button", name=re.compile("leave call", re.I))
 
@@ -127,36 +163,82 @@ def leave_button(page):
 async def join(page, url):
     log("Opening", url)
     await page.goto(url, wait_until="domcontentloaded")
-    await page.wait_for_timeout(5000)
-    await click_first(page, [r"^got it$", r"^dismiss$", r"continue without"], 1500)
+    # No fixed waits: act the moment Meet's controls exist, and only click popups that are there
+    join_btn = page.get_by_role("button", name=re.compile(r"join now|ask to join|join here too|switch here", re.I)).first
+    try:
+        await join_btn.wait_for(timeout=30_000)
+    except PWTimeout:
+        raise RuntimeError("Couldn't find a join button. Watch it in noVNC to see what Meet is showing.")
+    for pat in (r"^got it$", r"^dismiss$", r"use microphone and camera"):
+        popup = page.get_by_role("button", name=re.compile(pat, re.I)).first
+        if await popup.count():
+            await popup.click()
 
     name_box = page.get_by_role("textbox", name=re.compile("your name", re.I))
     if await name_box.count():  # not signed in: join as guest
         log("Not signed in, joining as guest named", NAME)
         await name_box.first.fill(NAME)
 
-    for pat in (r"turn off microphone", r"turn off camera"):
-        await click_first(page, [pat], 1500)
+    if not TEST_AUDIO:  # (the test speaks through the microphone)
+        # Wait for this one: the fake microphone beeps. The camera stays on: it shows the avatar.
+        mic = page.get_by_role("button", name=re.compile("turn off microphone", re.I)).first
+        await mic.wait_for(timeout=10_000)
+        await mic.click()
 
-    clicked = await click_first(page, [r"join now", r"ask to join", r"join here too", r"switch here"], 5000)
-    if not clicked:
-        raise RuntimeError("Couldn't find a join button. Watch it in noVNC to see what Meet is showing.")
+    clicked = (await join_btn.get_attribute("aria-label")) or (await join_btn.inner_text()).strip()
+    await join_btn.click()
     log(f"Clicked '{clicked}'. Waiting to be admitted (up to 10 min)...")
     # "Leave call" also shows in the waiting room; "Share screen" only once admitted
     await page.get_by_role("button", name=re.compile("share screen", re.I)).first.wait_for(timeout=600_000)
     log("In the call.")
 
 
+async def pin_meet_tab(page):
+    """Keep the Meet tab in the call. The agent's browser tools start on this tab and sometimes
+    navigate it ("pull up YouTube"), which leaves the call. Such navigations are cancelled and the
+    page opens in a new tab instead."""
+    cdp = await page.context.new_cdp_session(page)
+    main = (await cdp.send("Page.getFrameTree"))["frameTree"]["frame"]["id"]
+
+    async def paused(e):
+        url = e["request"]["url"]
+        if e.get("frameId") == main and urlsplit(url).hostname != "meet.google.com":
+            log("Kept the Meet tab in the call; opening in a new tab instead:", url)
+            # "Aborted", not a network error: a failed navigation would replace Meet with an error page
+            await cdp.send("Fetch.failRequest", {"requestId": e["requestId"], "errorReason": "Aborted"})
+            await (await page.context.new_page()).goto(url)
+        else:
+            await cdp.send("Fetch.continueRequest", {"requestId": e["requestId"]})
+
+    cdp.on("Fetch.requestPaused", lambda e: asyncio.create_task(paused(e)))
+    # Only whole-page loads pause here; Meet's own traffic isn't touched
+    await cdp.send("Fetch.enable", {"patterns": [{"urlPattern": "*", "resourceType": "Document", "requestStage": "Request"}]})
+
+
 async def chat_box(page):
-    box = page.get_by_role("textbox", name=re.compile("send a message", re.I)).first
+    box = page.get_by_role("textbox", name=re.compile("send a message", re.I), include_hidden=True).first
     if await box.count() and await box.is_visible():
         return box
-    await click_first(page, [r"chat with everyone", r"open chat", r"^chat"], 3000)
+    # Meet closes the chat panel on its own (e.g. once a presentation takes over the layout). JS click:
+    # a mouse click doesn't land reliably while the shared tab is in front.
+    await page.evaluate("""() => {
+        const box = document.querySelector('textarea[aria-label*="send a message" i]');
+        if (box && box.offsetParent) return;  // already open: the button toggles, don't close it
+        document.querySelector('button[aria-label*="chat with everyone" i], button[aria-label*="open chat" i]')?.click();
+    }""")
     await box.wait_for(timeout=10_000)
     return box
 
 
 async def send(page, text):
+    """Post to the meeting chat. A failure is logged, never raised: losing a message beats leaving the call."""
+    try:
+        await post(page, text)
+    except Exception as e:
+        log("Couldn't post to chat:", str(e).splitlines()[0], "| message was:", (text or "")[:200])
+
+
+async def post(page, text):
     # Never echo the trigger, or Jamie would answer itself.
     text = re.sub(re.escape(TRIGGER), TRIGGER.lstrip("/"), text or "", flags=re.I).strip() or "(no output)"
     chunks = [text[i:i + CHUNK] for i in range(0, len(text), CHUNK)]
@@ -168,32 +250,171 @@ async def send(page, text):
         await box.fill(c)
         await box.press("Enter")
         await page.wait_for_timeout(500)
+        if await box.input_value():  # Enter can get lost while another tab is in front: use the button
+            await page.get_by_role("button", name=re.compile("send", re.I)).first.evaluate("b => b.click()")
+
+
+# Sites rename their tab (YouTube does, after loading). Chromium picks the tab to share by its
+# title, so the stage keeps its title no matter what the site does.
+LOCK_TITLE_JS = """(() => {
+  const T = %s;
+  Object.defineProperty(Document.prototype, "title", { get: () => T, set: () => {}, configurable: true });
+  const pin = () => {
+    let t = document.querySelector("title");
+    if (!t && document.head) document.head.append(t = document.createElement("title"));
+    if (t && t.textContent !== T) t.textContent = T;
+  };
+  new MutationObserver(pin).observe(document, { subtree: true, childList: true, characterData: true });
+  document.addEventListener("DOMContentLoaded", pin);
+})();""" % json.dumps(STAGE_TITLE)
 
 
 async def show(page, url):
-    """Screen-share url from a separate stage tab. 'off' just stops sharing."""
-    for p in page.context.pages:
-        if p is not page:
-            await p.close()  # closing the shared tab ends the presentation
+    """Screen-share url from a separate stage tab and return the tab. 'off' just stops sharing."""
+    old = [p for p in page.context.pages if p is not page]
+    for p in old:
+        await p.close()  # closing the shared tab ends the presentation
     if url.lower() == "off":
-        return
-    await page.wait_for_timeout(1500)  # let Meet register the old share ending
+        await avatar_fps(page, 24)
+        return None
+    if old:
+        await page.wait_for_timeout(1500)  # let Meet register the old share ending
     stage = await page.context.new_page()
+    await stage.add_init_script(LOCK_TITLE_JS)
     await stage.goto(url, wait_until="domcontentloaded")
-    if "youtube.com/watch" in url:  # YouTube starts at 360p and ramps up slowly
-        try:
-            await stage.locator("#movie_player").wait_for(timeout=15_000)
-            await stage.evaluate("document.getElementById('movie_player').setPlaybackQualityRange?.('hd1080')")
-        except PWTimeout:
-            pass
-    await stage.evaluate("t => document.title = t", STAGE_TITLE)
-    share = page.get_by_role("button", name=re.compile("share screen|present now", re.I)).first
+    await youtube_hd(stage)
+    for _ in range(20):
+        if await stage.title() == STAGE_TITLE:
+            break
+        await stage.wait_for_timeout(250)
+    else:
+        raise RuntimeError(f"The page wouldn't keep the title {STAGE_TITLE!r}, so it can't be shared")
+    # include_hidden: a Meet dialog can hide the rest of the page from screen readers (and get_by_role)
+    share = page.get_by_role("button", name=re.compile("share screen|present now", re.I), include_hidden=True).first
     # JS click: a Playwright mouse click hangs while the capture picker opens
     await share.evaluate("b => b.click()")
     await stage.bring_to_front()  # so it's what you see in noVNC too
+    # Only report success once Meet says so, so the agent never tells people it's sharing when it isn't
+    try:
+        await page.get_by_role("button", name=re.compile("stop presenting|you are presenting", re.I),
+                                include_hidden=True).first.wait_for(state="attached", timeout=15_000)
+    except PWTimeout:
+        await stage.close()
+        raise RuntimeError("Meet didn't start presenting. Try --show again.")
+    await avatar_fps(page, 4)  # its tile is tiny during a presentation; the CPU goes to the shared video
+    dialogs = await page.evaluate("""() => [...document.querySelectorAll('[role=dialog], [role=alertdialog]')]
+        .filter(d => d.offsetParent).map(d => d.innerText.trim().slice(0, 200))""")
+    if any(dialogs):
+        log("Meet showed a dialog after sharing:", dialogs)
+    return stage
 
 
-async def show_cli(url):
+async def youtube_hd(stage):
+    if "youtube.com/watch" in stage.url:  # YouTube starts at 360p and ramps up slowly
+        try:
+            await stage.locator("#movie_player").wait_for(timeout=15_000)
+            # 720p: the share is 1280x800 anyway, and decoding 1080p in software starves the capture
+            await stage.evaluate("document.getElementById('movie_player').setPlaybackQualityRange?.('hd720', 'hd720')")
+        except PWTimeout:
+            pass
+
+
+async def fullscreen(stage, want=True):
+    """Fullscreen the video in the stage tab (YouTube: its "f" shortcut, a real key press so it counts
+    as a user gesture). Returns whether it worked."""
+    if await stage.evaluate("!!document.fullscreenElement") != want:
+        await stage.bring_to_front()
+        if await stage.locator("#movie_player").count():
+            await stage.evaluate("document.activeElement?.blur()")
+            await stage.keyboard.press("f")
+        elif want:
+            await stage.locator("video").first.dblclick()  # most players go fullscreen on double-click
+        else:
+            await stage.keyboard.press("Escape")
+        await stage.wait_for_timeout(500)
+    return await stage.evaluate("!!document.fullscreenElement") == want
+
+
+SKIP_AD = ".ytp-skip-ad-button, .ytp-ad-skip-button, .ytp-ad-skip-button-modern"
+
+
+async def skip_ads(page):
+    """Click YouTube's Skip button in the shared tab whenever it shows. The main loop calls this."""
+    for p in page.context.pages:
+        if p is not page and "youtube.com/watch" in p.url:
+            skip = p.locator(SKIP_AD).first
+            if await skip.count() and await skip.is_visible():
+                await skip.click(timeout=2000)
+                log("Skipped an ad.")
+
+
+async def play(page, query):
+    """Share YouTube's search results, then open the top video in the same (shared) tab.
+    Returns (title, url)."""
+    stage = await show(page, "https://www.youtube.com/results?" + urlencode({"search_query": query}))
+    link = stage.locator("a#video-title[href^='/watch']").first
+    await link.wait_for(timeout=15_000)
+    title = (await link.inner_text()).strip()
+    await link.click()  # YouTube swaps in the video without reloading; the share follows the tab
+    await stage.wait_for_url(re.compile(r"youtube\.com/watch"), timeout=15_000)
+    await youtube_hd(stage)
+    await fullscreen(stage)  # what people want when they ask for a video; ads get skipped by the main loop
+    return title, stage.url.split("&")[0]
+
+
+VIDEO_ACTIONS = ("play", "pause", "fullscreen", "exit-fullscreen", "skip-ad", "mute", "unmute")
+
+
+async def stage_tab(page):
+    for p in page.context.pages:
+        if p is not page and await p.title() == STAGE_TITLE:
+            return p
+    raise RuntimeError("Nothing is being shared. Use --play or --show first.")
+
+
+async def video(page, action):
+    """Control the video in the shared tab in one step. Returns what happened, for the agent to relay."""
+    stage = await stage_tab(page)
+    v = "document.querySelector('#movie_player video, video')"
+    if not await stage.evaluate(f"!!{v}"):
+        raise RuntimeError("There's no video in the shared tab.")
+    if action in ("play", "pause"):
+        # YouTube's own controls when it's YouTube: video.play() errors while an ad hands over to the video
+        await stage.evaluate("""a => { const p = document.getElementById('movie_player');
+            if (p && p.playVideo) a === 'play' ? p.playVideo() : p.pauseVideo();
+            else { const v = document.querySelector('video'); a === 'play' ? v.play().catch(() => {}) : v.pause(); } }""", action)
+        return "Playing." if action == "play" else "Paused."
+    if action in ("mute", "unmute"):
+        await stage.evaluate(f"{v}.muted = {str(action == 'mute').lower()}")
+        return "Muted." if action == "mute" else "Unmuted."
+    if action in ("fullscreen", "exit-fullscreen"):
+        want = action == "fullscreen"
+        if await fullscreen(stage, want):
+            return "Fullscreen." if want else "Out of fullscreen."
+        return "Couldn't change fullscreen on this player."
+    if action == "skip-ad":
+        skip = stage.locator(SKIP_AD).first
+        for _ in range(40):  # YouTube shows the Skip button a few seconds into the ad
+            if not await stage.locator(".ad-showing").count():
+                return "No ad playing."
+            if await skip.count() and await skip.is_visible():
+                await skip.click()
+                return "Skipped the ad."
+            await stage.wait_for_timeout(500)
+        return "This ad can't be skipped; it ends on its own."
+    raise RuntimeError(f"Unknown action {action!r}. Use one of: {', '.join(VIDEO_ACTIONS)}")
+
+
+async def ide_cli(path):
+    async with async_playwright() as p:
+        b = await p.chromium.connect_over_cdp(CDP)
+        meet = next((pg for c in b.contexts for pg in c.pages if "meet.google.com" in pg.url), None)
+        if not meet:
+            sys.exit("Jamie isn't in a Meet call.")
+        print(await ide(meet, "" if path == "." else path))
+
+
+async def show_cli(url, query=None):
     # Separate process (run by Claude mid-task): attach to the bot's running Chromium.
     async with async_playwright() as p:
         b = await p.chromium.connect_over_cdp(CDP)
@@ -201,13 +422,19 @@ async def show_cli(url):
         meet = next((pg for pg in pages if "meet.google.com" in pg.url), None)
         if not meet:
             sys.exit("Jamie isn't in a Meet call.")
-        await show(meet, url)
-        print("Sharing" if url.lower() != "off" else "Stopped sharing", url)
+        if url and url.startswith("video:"):
+            print(await video(meet, url.removeprefix("video:")))
+        elif query:
+            title, url = await play(meet, query)
+            print(f"Playing {title} {url}")
+        else:
+            await show(meet, url)
+            print("Stopped sharing" if url.lower() == "off" else f"Sharing {url}")
 
 
 async def read_messages(page):
     try:
-        return await page.evaluate(READ_JS)
+        return await asyncio.wait_for(page.evaluate(READ_JS), 5)
     except Exception:
         return []
 
@@ -216,7 +443,9 @@ async def read_messages(page):
 
 # Each agent CLI reads its project instructions from its own file in the working directory.
 INSTRUCTIONS = {"claude": "CLAUDE.md", "codex": "AGENTS.md", "gemini": "GEMINI.md"}
-BROWSER_MCP = {"browser": {"command": "playwright-mcp", "args": ["--cdp-endpoint", CDP]}}
+# The agent's browser tools go through cdp_filter, which hides the Meet tab from them
+AGENT_CDP = "http://localhost:9223"
+BROWSER_MCP = {"browser": {"command": "playwright-mcp", "args": ["--cdp-endpoint", AGENT_CDP]}}
 CLAUDE_MCP = "/tmp/jamie-mcp.json"
 CODEX_LAST = "/tmp/codex-last-message.txt"
 
@@ -280,11 +509,13 @@ class Agent:
     def __init__(self, name, servers):
         self.name, self.servers = name, servers
         self.has_session = False  # after the first request, continue the same conversation
+        self.proc = None  # claude: one process for the whole call (see run_claude)
 
-    def command(self, prompt):
+    def command(self, prompt=None):
         full, cont = PERMS == "full", self.has_session
-        if self.name == "claude":
-            cmd = ["claude", "-p", "--output-format", "text", "--mcp-config", CLAUDE_MCP]
+        if self.name == "claude":  # stays open; requests arrive as stream-json messages on stdin
+            cmd = ["claude", "-p", "--input-format", "stream-json", "--output-format", "stream-json",
+                   "--verbose", "--mcp-config", CLAUDE_MCP]
             cmd += ["--continue"] if cont else []
             cmd += ["--dangerously-skip-permissions"] if full else ["--allowedTools", "WebSearch,WebFetch,Read,Glob,Grep"]
         elif self.name == "codex":
@@ -298,8 +529,47 @@ class Agent:
             cmd.append(f"--prompt={prompt}")  # `=` so a prompt starting with "-" isn't read as a flag
         return cmd
 
+    async def start(self):
+        """Start Claude and its browser tools now, so the first request doesn't wait for them."""
+        if self.name == "claude" and (not self.proc or self.proc.returncode is not None):
+            self.proc = await asyncio.create_subprocess_exec(
+                *self.command(), cwd=WORKSPACE, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL, limit=2**25)  # events carry page snapshots: long lines
+
+    async def reset(self):
+        """Forget the conversation: the next request starts a new one."""
+        self.has_session = False
+        if self.proc and self.proc.returncode is None:
+            self.proc.kill()
+            await self.proc.wait()
+        self.proc = None
+
+    async def run_claude(self, prompt):
+        await self.start()
+        msg = {"type": "user", "message": {"role": "user", "content": prompt}}
+        self.proc.stdin.write((json.dumps(msg) + "\n").encode())
+        await self.proc.stdin.drain()
+        try:
+            async with asyncio.timeout(TIMEOUT):
+                while line := await self.proc.stdout.readline():
+                    event = json.loads(line)
+                    if event.get("type") == "result":
+                        self.has_session = True
+                        out = (event.get("result") or "").strip()
+                        log(self.name, "->", out[:500])
+                        return out if not event.get("is_error") else f"claude hit an error: {out[-400:]}"
+        except TimeoutError:
+            self.proc.kill()  # can't stop it mid-task otherwise; the next request continues the conversation
+            await self.proc.wait()
+            self.proc = None
+            return f"Timed out after {TIMEOUT}s."
+        self.proc = None  # it exited; the next request starts it again (with --continue)
+        return "claude stopped unexpectedly. Try again."
+
     async def run(self, prompt):
         log(self.name, "<-", prompt)
+        if self.name == "claude":
+            return await self.run_claude(prompt)
         if os.path.exists(CODEX_LAST):
             os.remove(CODEX_LAST)
         proc = await asyncio.create_subprocess_exec(
@@ -328,12 +598,15 @@ class Agent:
 
 # ---------- main loop ----------
 
-async def worker(page, agent, queue):
+async def worker(page, agent, queue, state):
     while True:
         prompt = await queue.get()
+        state["busy"] = prompt
+        await avatar(page, "thinking")
         try:
-            await send(page, f"On it: {prompt[:100]}")
-            await send(page, await agent.run(prompt))
+            reply = await agent.run(prompt)
+            state["last_reply"] = reply
+            await send(page, reply)
         except Exception as e:
             log("worker error:", e)
             try:
@@ -341,12 +614,215 @@ async def worker(page, agent, queue):
             except Exception:
                 pass
         finally:
+            state["busy"] = ""
+            await avatar(page, "listening")
             queue.task_done()
+
+
+# Instant controls: for simple requests the judge picks one of these and the bot does it right away,
+# without the agent (~0.5s instead of several). A room adds its own in controls.json:
+#   {"next-slide": {"description": "go to the next slide", "keys": ["ArrowRight"]}}
+BUILTIN_CONTROLS = {
+    "pause": "pause the video", "play": "play or resume the video", "fullscreen": "make the video fullscreen",
+    "exit-fullscreen": "leave fullscreen", "mute": "mute the shared video", "unmute": "unmute the shared video",
+    "skip-ad": "skip the ad", "scroll-down": "scroll down the shared page", "scroll-up": "scroll up the shared page",
+    "top": "go to the top of the shared page", "bottom": "go to the bottom of the shared page",
+    "back": "go back to the previous page on the shared screen",
+    "open": "click something visible on the shared screen (\"play that video\", \"open the second link\"); "
+            "arg = its name exactly as listed under Visible",
+    "play-video": "search YouTube and play the top video fullscreen; arg = what to search for",
+    "show": "open a website on the shared screen; arg = its full URL",
+    "ide": "open the code editor (VS Code) on the shared screen",
+}
+SCROLL = {"scroll-down": "scrollBy({top: innerHeight * 0.8, behavior: 'smooth'})",
+          "scroll-up": "scrollBy({top: -innerHeight * 0.8, behavior: 'smooth'})",
+          "top": "scrollTo({top: 0, behavior: 'smooth'})", "bottom": "scrollTo({top: 1e9, behavior: 'smooth'})"}
+
+# What's visible on the shared tab: things to click get a number (data-jamie-pick) so "open" can click them
+ON_SCREEN_JS = """() => {
+  document.querySelectorAll('[data-jamie-pick]').forEach(e => e.removeAttribute('data-jamie-pick'));
+  const seen = new Set(), items = [];
+  for (const e of document.querySelectorAll('a[href], button, [role=button], [role=link]')) {
+    const r = e.getBoundingClientRect();
+    if (!r.width || !r.height || r.bottom < 0 || r.top > innerHeight || r.right < 0 || r.left > innerWidth) continue;
+    const text = (e.getAttribute('title') || e.innerText || e.getAttribute('aria-label') || '').trim().replace(/\\s+/g, ' ');
+    if (text.length < 3 || text.length > 120 || seen.has(text)) continue;
+    seen.add(text);
+    e.dataset.jamiePick = items.length;
+    items.push(text);
+    if (items.length >= 60) break;
+  }
+  const h = document.querySelector('h1');
+  return { url: location.href, heading: h ? h.innerText.trim().slice(0, 120) : '', items };
+}"""
+
+
+async def on_screen(page):
+    """What the shared tab shows, or None when nothing is shared."""
+    try:
+        return await asyncio.wait_for((await stage_tab(page)).evaluate(ON_SCREEN_JS), 3)
+    except Exception:
+        return None
+
+
+def describe(screen):
+    if not screen:
+        return "Nothing is being shared."
+    return (f"Shared tab: {screen['heading'] or '(no heading)'} ({screen['url'][:150]})\n"
+            f"Visible: {'; '.join(screen['items'][:40]) or '(nothing clickable)'}")
+
+
+def room_controls():
+    """controls.json from the room, or {} (a broken file is reported, not fatal)."""
+    path = os.path.join(WORKSPACE, "controls.json")
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path) as f:
+            return {k: v for k, v in json.load(f).items() if isinstance(v.get("keys"), list)}
+    except Exception as e:
+        log("Ignoring controls.json:", e)
+        return {}
+
+
+def controls():
+    """name -> description, for the judge."""
+    return {**BUILTIN_CONTROLS, **{k: v.get("description", k) for k, v in room_controls().items()}}
+
+
+IDE_PORT = 8443
+
+
+async def ide(page, path=""):
+    """VS Code (code-server) on the shared screen, showing the workspace; optionally open a file in it."""
+    def up():
+        with socket.socket() as sock:
+            return sock.connect_ex(("127.0.0.1", IDE_PORT)) == 0
+    if not up():
+        subprocess.Popen(["code-server", "--auth", "none", "--bind-addr", f"127.0.0.1:{IDE_PORT}", "--disable-telemetry",
+                          "--disable-update-check", "--disable-workspace-trust", WORKSPACE],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)  # outlives --ide
+        for _ in range(60):
+            if up():
+                break
+            await asyncio.sleep(0.25)
+    stage = await show(page, f"http://localhost:{IDE_PORT}/?folder={WORKSPACE}")
+    await stage.locator(".monaco-workbench").wait_for(timeout=20_000)
+    if path:
+        await stage.keyboard.press("Control+P")  # Quick Open
+        await stage.keyboard.type(os.path.relpath(os.path.abspath(path), WORKSPACE))
+        await stage.wait_for_timeout(400)
+        await stage.keyboard.press("Enter")
+    return "The code editor is on screen."
+
+
+async def control(page, name, arg=""):
+    """Do an instant control on the shared tab. Returns what happened."""
+    if name in room_controls():
+        stage = await stage_tab(page)
+        await stage.bring_to_front()
+        for key in room_controls()[name]["keys"]:
+            await stage.keyboard.press(key)
+        return f"Pressed {' '.join(room_controls()[name]['keys'])}."
+    if name in SCROLL:
+        await (await stage_tab(page)).evaluate(SCROLL[name])
+        return "Scrolled."
+    if name == "skip-ad":
+        await skip_ads(page)
+        return "Skipping the ad as soon as YouTube allows."
+    if name == "back":
+        await (await stage_tab(page)).go_back()
+        return "Went back."
+    if name == "open":
+        stage, screen = await stage_tab(page), await on_screen(page)
+        want = arg.lower()
+        score = lambda t: SequenceMatcher(None, want, t.lower()).ratio() + (0.5 if want and want in t.lower() else 0)  # noqa: E731
+        best = max(range(len(screen["items"])), key=lambda n: score(screen["items"][n]), default=None)
+        if best is None or score(screen["items"][best]) < 0.5:
+            raise RuntimeError(f"couldn't find {arg!r} on screen")
+        await stage.locator(f'[data-jamie-pick="{best}"]').first.click(timeout=5000)
+        await stage.wait_for_timeout(1000)
+        if "youtube.com/watch" in stage.url:
+            await youtube_hd(stage)
+            await fullscreen(stage)
+        return f"Opened {screen['items'][best]}."
+    if name == "play-video":
+        title, url = await play(page, arg)
+        return f"Playing {title}."
+    if name == "show":
+        if not re.match(r"https?://", arg):
+            raise RuntimeError(f"not a URL: {arg!r}")
+        await show(page, arg)
+        return f"Showing {arg}."
+    if name == "ide":
+        return await ide(page)
+    return await video(page, name)
+
+
+async def run_control(page, name, arg):
+    try:
+        log("control:", name, arg, "->", await asyncio.wait_for(control(page, name, arg), 40))
+    except Exception as e:
+        log("control failed:", name, arg, e)
+        await send(page, f"Couldn't {name} {arg}: {str(e).splitlines()[0]}".replace("  ", " "))
+
+
+async def act(page, agent, queue, action, request, ack, control_name="", arg=""):
+    """Carry out a command from chat or speech. Returns True when Jamie should leave."""
+    if action == "control":  # in the background: listening goes on while e.g. YouTube loads
+        asyncio.create_task(run_control(page, control_name, arg))
+        return False
+    if ack:
+        await send(page, ack)
+    if action == "leave":
+        await leave_button(page).first.click()
+        return True
+    if action == "stop_sharing":
+        await show(page, "off")
+    elif action == "reset":
+        await agent.reset()
+    elif action == "request":
+        await queue.put(request)
+    return False
+
+
+async def captions_on(page, first=True):
+    """Turn Meet's captions on (they're Jamie's ears). Meet can turn them off again, e.g. when Jamie
+    starts presenting, so the main loop calls this every few seconds."""
+    clicked = await asyncio.wait_for(page.evaluate("""() => {
+        const b = document.querySelector('button[aria-label*="turn on captions" i]');
+        if (b) b.click();
+        return !!b;
+    }"""), 5)
+    if clicked:
+        log("Captions on: listening to the call." if first else "Meet had turned captions off; turned them back on.")
+    if not first:
+        return
+    with open(os.path.join(WORKSPACE, "transcript.md"), "a") as f:
+        f.write(f"\n## Meeting {time.strftime('%Y-%m-%d %H:%M')}\n\n")
+
+
+def transcribe(lines):
+    with open(os.path.join(WORKSPACE, "transcript.md"), "a") as f:
+        for speaker, text in lines:
+            f.write(f"[{time.strftime('%H:%M:%S')}] {speaker}: {text}\n")
 
 
 async def listen(page, agent):
     queue, seen = asyncio.Queue(), set()
+    state = {"busy": "", "last_reply": ""}
+    caps, judge = hearing.Captions(hear_self=bool(TEST_AUDIO)), hearing.Judge(NAME, controls())
+    heard, pending, judging = [], [], None  # judged lines; lines not yet judged; running judge task
+    waiting, gave_up = None, False  # when the judge said "wait"; whether this is the last try
+    async def warm_up():
+        start = time.monotonic()
+        await judge.warm_up()
+        log(f"judge ready in {time.monotonic() - start:.1f}s")
+    warm = asyncio.create_task(warm_up())  # noqa: F841 (runs while Jamie finishes joining)
+    await agent.start()
     await chat_box(page)
+    await captions_on(page)
+    last_check = last_beat = last_skip = time.monotonic()
 
     if DEBUG:
         path = os.path.join(WORKSPACE, "meet-dump.html")
@@ -354,16 +830,23 @@ async def listen(page, agent):
             f.write(await page.content())
         log("DOM dumped to", path)
 
-    await send(page, f"{NAME} here.")  # don't announce the trigger: it's the only access control
+    # Say it's listening (people should know there's a transcript); never announce the trigger
+    await send(page, f"{NAME} here. I'm listening and keeping a transcript.")
     await page.wait_for_timeout(2000)
     seen.update(m["id"] for m in await read_messages(page))  # ignore history + own welcome
 
-    task = asyncio.create_task(worker(page, agent, queue))
-    log(f"Listening for '{TRIGGER}' in chat.")
+    task = asyncio.create_task(worker(page, agent, queue, state))
+    log(f"Listening for '{TRIGGER}' in chat and for {NAME}'s name out loud.")
+    gone = 0  # consecutive checks without the Leave button
     try:
         while True:
-            if not await leave_button(page).count():
-                log("Call ended or Jamie was removed.")
+            gone = 0 if await in_call(page) else gone + 1
+            if gone >= 10:  # ~3s: not just a dialog or Meet redrawing
+                log("Call ended or Jamie was removed. Meet showed:", page.url)
+                try:
+                    await page.screenshot(path=os.path.join(WORKSPACE, "left-call.png"))
+                except Exception:
+                    pass
                 return
             for m in await read_messages(page):
                 if not m["id"] or m["id"] in seen:
@@ -374,23 +857,160 @@ async def listen(page, agent):
                     continue
                 cmd = hit.group(1).strip()
                 if cmd.lower() == "leave":
-                    await send(page, "Bye.")
-                    await leave_button(page).first.click()
-                    return
-                if cmd.lower() in ("stop", "stop sharing"):
-                    await show(page, "off")
+                    action, ack = "leave", "Bye."
+                elif cmd.lower() in ("stop", "stop sharing"):
+                    action, ack = "stop_sharing", ""
                 elif cmd.lower() == "reset":
-                    agent.has_session = False
-                    await send(page, "Fresh context.")
+                    action, ack = "reset", "Fresh context."
                 elif not cmd:
-                    await send(page, f"Usage: {TRIGGER} <request>")
+                    action, ack = "none", f"Usage: {TRIGGER} <request>"
                 else:
-                    if queue.qsize() or agent_busy(queue):
-                        await send(page, f"Queued: {cmd[:80]}")
-                    await queue.put(cmd)
-            await asyncio.sleep(1)
+                    action, ack = "request", f"{'Queued' if queue.qsize() or agent_busy(queue) else 'On it'}: {cmd[:100]}"
+                if await act(page, agent, queue, action, cmd, ack):
+                    return
+
+            # Speech: finished caption lines go to the transcript and, one batch at a time, to the judge
+            snapshot = await read_captions(page)
+            if time.monotonic() - last_skip > 1:
+                last_skip = time.monotonic()
+                try:
+                    await asyncio.wait_for(skip_ads(page), 5)
+                except Exception:
+                    pass
+            if time.monotonic() - last_check > 5:
+                last_check = time.monotonic()
+                try:
+                    await captions_on(page, first=False)
+                except Exception as e:
+                    log("Couldn't check captions:", e)
+            if time.monotonic() - last_beat > 60:
+                last_beat = time.monotonic()
+                log(f"listening: captions {'on' if snapshot is not None else 'NOT FOUND'}, "
+                    f"{len(snapshot or [])} caption block(s) on screen, busy with: {state['busy'][:60] or 'nothing'}")
+            lines = caps.feed(snapshot)
+            if lines:
+                transcribe(lines)
+                for s, t in lines:
+                    log("heard", f"{s}: {t}")
+                pending += lines
+                if not state["busy"] and any(judge.wake.search(t) for _, t in lines):
+                    await avatar(page, "thinking")  # show it heard its name before the judge answers
+            if judging and judging.done():
+                verdict, batch = judging.result()
+                judging = None
+                log("judge:", verdict)
+                if verdict["action"] in ("none", "leave") and not state["busy"]:
+                    await avatar(page, "listening")
+                if verdict["action"] == "wait" and gave_up:
+                    # They stopped talking: a vague request still goes to the agent, which can ask what they meant
+                    verdict = {"action": "request", "ack": "On it.", "control": "", "arg": "",
+                               "request": verdict["request"] or " ".join(t for _, t in batch)}
+                if verdict["action"] == "wait":
+                    pending, waiting = batch + pending, time.monotonic()  # judge again with more words
+                else:
+                    heard += batch
+                    request = verdict["request"] or " ".join(t for _, t in batch)  # the judge sometimes leaves it blank
+                    if verdict["action"] == "request":
+                        request = f"{batch[-1][0]} asked out loud: {request}"
+                    if verdict["action"] == "request":  # the agent sees what's on the shared screen too
+                        request += f"\n\n(On the shared screen right now: {describe(await on_screen(page))})"
+                    if await act(page, agent, queue, verdict["action"], request, verdict["ack"], verdict["control"],
+                                 verdict.get("arg", "")):
+                        return
+            # After a "wait", judge again when more words come, or give up 3s later
+            if pending and not judging and (not waiting or lines or time.monotonic() - waiting > 3):
+                gave_up = bool(waiting) and not lines
+                batch, pending, waiting = pending, [], None
+                people = sorted({s for s, _ in heard + batch if s != "You"})
+                judging = asyncio.create_task(judged(judge, heard[-20:], batch, state, people, page))
+            await asyncio.sleep(0.3)
     finally:
         task.cancel()
+        await agent.reset()
+
+
+async def judged(judge, context, batch, state, people, page):
+    start = time.monotonic()
+    screen = describe(await on_screen(page))
+    verdict = await judge(context, batch, state["last_reply"], state["busy"], people, screen)
+    log(f"judge took {time.monotonic() - start:.1f}s for {len(batch)} line(s)")
+    return verdict, batch
+
+
+# On the Meet page: keep a handle on the call's connections (so tests can read video stats), and
+# make screen-shares smooth
+STATS_JS = """(() => {
+  if (location.hostname !== "meet.google.com" || window.__jamiePCs) return;
+  window.__jamiePCs = [];
+  const PC = window.RTCPeerConnection;
+  window.RTCPeerConnection = function (...a) { const pc = new PC(...a); window.__jamiePCs.push(pc); return pc; };
+  window.RTCPeerConnection.prototype = PC.prototype;
+  Object.setPrototypeOf(window.RTCPeerConnection, PC);
+
+  // Meet asks for a screen-share at slide-deck frame rates (~4fps measured): Jamie shares video, so
+  // ask for 30fps and mark it as motion, so the encoder keeps the frame rate and gives up detail instead
+  const gdm = navigator.mediaDevices.getDisplayMedia.bind(navigator.mediaDevices);
+  navigator.mediaDevices.getDisplayMedia = async (c = {}) => {
+    const video = { ...(typeof c.video === "object" ? c.video : {}), frameRate: { ideal: 30, max: 30 } };
+    const stream = await gdm({ ...c, video });
+    for (const t of stream.getVideoTracks()) {
+      t.contentHint = "motion";
+      const apply = t.applyConstraints.bind(t);  // Meet lowers the frame rate again later: keep it at 30
+      t.applyConstraints = (k = {}) => apply({ ...k, frameRate: { ideal: 30, max: 30 } });
+      await apply({ frameRate: { ideal: 30, max: 30 } }).catch(() => {});
+    }
+    return stream;
+  };
+})();"""
+
+# Outgoing video, one entry per stream Meet sends (camera layers, the shared tab)
+SENT_VIDEO_JS = """async () => {
+  const out = [];
+  for (const pc of window.__jamiePCs || []) {
+    const stats = await pc.getStats();
+    stats.forEach(s => {
+      if (s.type !== "outbound-rtp" || s.kind !== "video" || !s.frameWidth) return;
+      const src = stats.get(s.mediaSourceId);
+      out.push({ size: s.frameWidth + "x" + s.frameHeight, fps: Math.round(s.framesPerSecond || 0),
+                 limit: s.qualityLimitationReason, kbps: Math.round((s.targetBitrate || 0) / 1000),
+                 source: src ? src.width + "x" + src.height + "@" + Math.round(src.framesPerSecond || 0) : "",
+                 codec: (stats.get(s.codecId) || {}).mimeType });
+    });
+  }
+  return out;
+}"""
+
+
+def avatar_script():
+    """avatar.js, preceded by the look picked in the extension (JAMIE_LOOK, JSON)."""
+    try:
+        look = json.loads(os.environ.get("JAMIE_LOOK") or "{}")
+    except json.JSONDecodeError:
+        look = {}
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "avatar.js")) as f:
+        return f"window.__jamieLook = {json.dumps(look)};\n" + f.read()
+
+
+async def avatar_fps(page, fps):
+    try:
+        await page.evaluate("f => window.__jamieAvatar && (window.__jamieAvatar.fps = f)", fps)
+    except Exception:
+        pass
+
+
+async def avatar(page, state):
+    """Set the camera avatar's state: listening, thinking or talking (see avatar.js)."""
+    try:
+        await page.evaluate("s => window.__jamieAvatar && (window.__jamieAvatar.state = s)", state)
+    except Exception:
+        pass
+
+
+async def read_captions(page):
+    try:
+        return await asyncio.wait_for(page.evaluate(hearing.CAPTIONS_JS), 5)
+    except Exception:
+        return None
 
 
 def agent_busy(queue):
@@ -406,9 +1026,15 @@ async def run_bot(url, agent):
             permissions=["microphone", "camera"],
             viewport={"width": 1280, "height": 800},
         )
+        await ctx.add_init_script(avatar_script())
+        await ctx.add_init_script(STATS_JS)
         page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+        filter_server = await cdp_filter.serve(CDP, int(urlsplit(AGENT_CDP).port))  # noqa: F841 (lives with the bot)
+        ctx.on("page", lambda pg: pg.on("crash", lambda: log("A browser tab crashed:", pg.url)))
+        page.on("crash", lambda: log("The Meet tab crashed."))
         try:
             await join(page, url)
+            await pin_meet_tab(page)
             await listen(page, agent)
         finally:
             await ctx.close()
@@ -419,6 +1045,9 @@ def main():
     ap.add_argument("url", nargs="?")
     ap.add_argument("--login", action="store_true")
     ap.add_argument("--show", metavar="URL", help="screen-share URL in the running call ('off' stops)")
+    ap.add_argument("--play", metavar="QUERY", help="screen-share the top YouTube result for QUERY")
+    ap.add_argument("--video", choices=VIDEO_ACTIONS, help="control the video in the shared tab")
+    ap.add_argument("--ide", nargs="?", const=".", metavar="FILE", help="show VS Code on screen (and open FILE)")
     ap.add_argument("--env", default=os.environ.get("JAMIE_ENV", "default"),
                     help="folder in environments/ (jamie.sh mounts it; used here for messages)")
     ap.add_argument("--agent", default=os.environ.get("JAMIE_AGENT", "claude"), help="claude | codex | gemini")
@@ -427,8 +1056,10 @@ def main():
     a = ap.parse_args()
     if a.login:
         asyncio.run(login())
-    elif a.show:
-        asyncio.run(show_cli(a.show))
+    elif a.ide:
+        asyncio.run(ide_cli(a.ide))
+    elif a.show or a.play or a.video:
+        asyncio.run(show_cli(f"video:{a.video}" if a.video else a.show, a.play))
     elif a.url:
         agent = prepare(a.env, a.personality, a.agent)
         try:

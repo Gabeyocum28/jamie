@@ -22,6 +22,7 @@ You don't need to add these; they come from the shared core (`jamie/` + the root
       ROOM.md       required: the room's job, priorities and rules
       Dockerfile    software for this room only
       mcp.json      extra tools (MCP servers) the agent can call
+      controls.json instant actions (key presses) that skip the agent
       .env          API keys for this room only (gitignored)
       setup.sh      runs every time a Jamie starts
       anything else copied into Jamie's working folder: scripts, notes, data, skills
@@ -90,6 +91,27 @@ WOLFRAM_APP_ID=xxxx
 Only this room's Jamies get these variables. The file is gitignored and isn't copied into the
 working folder, so each teammate creates their own. In full permission mode, anyone in the call
 who can use the trigger can still make Jamie print these keys. Use keys you can revoke.
+
+### controls.json: instant actions
+
+Simple requests skip the agent. The fast judge maps them straight to an **instant control**, and the
+bot does it in about half a second instead of several seconds:
+- **Built in:** pause, play, fullscreen, exit-fullscreen, mute, unmute, skip-ad, scroll-down,
+  scroll-up, top, bottom.
+- **Your own:** a room adds controls as key presses in the shared tab:
+
+```json
+{
+  "next-slide": { "description": "go to the next slide", "keys": ["ArrowRight"] },
+  "prev-slide": { "description": "go back a slide", "keys": ["ArrowLeft"] },
+  "zoom-in":    { "description": "zoom in on the page", "keys": ["Control+Equal"] }
+}
+```
+
+"Hey Jamie, next slide" then presses → right away. The judge reads `description` to decide when a
+control fits, so make it what people would say. Key names follow
+[Playwright's keyboard names](https://playwright.dev/docs/api/class-keyboard#keyboard-press), such
+as `PageDown`, `Space`, `Shift+N` or `Control+Equal`. Anything a control can't cover goes to the agent.
 
 ### setup.sh: per-start setup
 

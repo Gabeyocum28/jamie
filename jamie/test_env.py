@@ -1,6 +1,8 @@
 """Self-check for environments/personalities/agents: ./jamie.sh test"""
+import asyncio
 import json
 import os
+import sys
 import tempfile
 
 import bot
@@ -60,6 +62,22 @@ def main():
     flags = bot.codex_mcp(a.servers)
     assert 'mcp_servers.notes.env={K = "v"}' in flags and 'mcp_servers.browser.command="playwright-mcp"' in flags
     assert bot.Agent("gemini", {}).command("-rf x")[-1] == "--prompt=-rf x"  # not parsed as a flag
+
+    # Claude stays running: requests reuse one process; reset starts over
+    echo = [sys.executable, "-c", "import sys, json\nfor l in sys.stdin:\n"
+            "    print(json.dumps({'type': 'assistant', 'note': 'x' * 100000}))\n"  # long event lines are fine
+            "    print(json.dumps({'type': 'result', 'result': 'echo ' + json.loads(l)['message']['content']}), flush=True)"]
+    c = bot.Agent("claude", {})
+    c.command = lambda prompt=None: echo
+
+    async def twice():
+        first = await c.run("one")
+        pid = c.proc.pid
+        second = await c.run("two")
+        assert (first, second) == ("echo one", "echo two") and c.proc.pid == pid and c.has_session
+        await c.reset()
+        assert c.proc is None and not c.has_session
+    asyncio.run(twice())
     print("env OK")
 
 

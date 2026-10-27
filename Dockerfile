@@ -13,18 +13,30 @@ RUN npm install -g @anthropic-ai/claude-code @openai/codex@0.162.1 @google/gemin
       @playwright/mcp@0.0.83
 
 # The image ships browsers but not the Python package; pin to the image's version so it finds them
-RUN pip install --no-cache-dir --break-system-packages playwright==1.63.0
+RUN pip install --no-cache-dir --break-system-packages playwright==1.63.0 websockets==15.0.1
+
+# VS Code in the browser, so Jamie can show code being written ("vibe coding") in its shared tab
+ARG TARGETARCH
+RUN curl -fsSL https://github.com/coder/code-server/releases/download/v4.96.4/code-server-4.96.4-linux-${TARGETARCH}.tar.gz \
+      | tar -xz -C /opt \
+ && ln -s /opt/code-server-4.96.4-linux-${TARGETARCH}/bin/code-server /usr/local/bin/code-server \
+ && mkdir -p /home/pwuser/.local/share/code-server/User \
+ && printf '%s' '{"workbench.startupEditor": "none", "workbench.colorTheme": "Default Dark Modern", "editor.fontSize": 20, "terminal.integrated.fontSize": 18, "window.commandCenter": false, "workbench.tips.enabled": false, "security.workspace.trust.enabled": false, "telemetry.telemetryLevel": "off", "chat.commandCenter.enabled": false}' \
+      > /home/pwuser/.local/share/code-server/User/settings.json
 
 # Agent logins live in named volumes mounted on these dirs; they must exist so the volumes are pwuser-owned
 RUN mkdir -p /data /workspace /app /home/pwuser/.claude /home/pwuser/.codex /home/pwuser/.gemini \
  && chown -R pwuser:pwuser /data /workspace /app /home/pwuser
 COPY --chown=pwuser:pwuser jamie/ /app/
+# The avatar lives with the extension, which uses it for its live preview
+COPY --chown=pwuser:pwuser extension/avatar.js /app/avatar.js
 COPY --chown=pwuser:pwuser start.sh /start.sh
 RUN chmod +x /start.sh /app/bot.py
 
 # Non-root: Claude Code refuses --dangerously-skip-permissions as root. Environment Dockerfiles that
 # need apt should switch to USER root, install, then switch back to USER pwuser.
 USER pwuser
-ENV DISPLAY=:99 HOME=/home/pwuser
+# ENABLE_TOOL_SEARCH=false: Claude sees the browser tools right away instead of spending a turn looking them up
+ENV DISPLAY=:99 HOME=/home/pwuser ENABLE_TOOL_SEARCH=false
 WORKDIR /workspace
 ENTRYPOINT ["/start.sh"]

@@ -28,6 +28,7 @@ TOKEN = os.environ.get("JAMIE_CONTROLLER_TOKEN", "")
 BIND = os.environ.get("JAMIE_BIND", "127.0.0.1")
 HOST = os.environ.get("JAMIE_HOST", "localhost")
 AGENTS = ("claude", "codex", "gemini")
+LOOK_KEYS = ("eyes", "mouth", "color", "motion", "accessory")
 PORTS = (6080, 3000, 5173, 8000)
 LOGIN_DIRS = {"claude": "/home/pwuser/.claude", "codex": "/home/pwuser/.codex",
               "gemini": "/home/pwuser/.gemini"}
@@ -55,10 +56,11 @@ def parse(body):
     """Validate a start request; the names end up in docker args and paths."""
     opts = options()
     try:
-        req = json.loads(body)
-        u = urlsplit(req["meet_url"])
-        req = {k: req.get(k, d) for k, d in
+        raw = json.loads(body)
+        u = urlsplit(raw["meet_url"])
+        req = {k: raw.get(k, d) for k, d in
                (("env", "default"), ("personality", "default"), ("agent", "claude"))}
+        look = raw.get("look") or {}
     except (ValueError, KeyError, TypeError, AttributeError):
         raise ValueError('expected JSON {"meet_url": ..., "env": ..., "personality": ..., "agent": ...}')
     code = re.fullmatch(r"(?:/meet)?/([a-z]{3}-[a-z]{4}-[a-z]{3})", u.path)  # some Meet tabs show /meet/<code>
@@ -68,6 +70,11 @@ def parse(body):
                          ("agent", opts["agents"])):
         if req[key] not in allowed:
             raise ValueError(f"unknown {key} {req[key]!r}. Available: {', '.join(allowed)}")
+    # The avatar's look: avatar.js ignores names it doesn't know, so only the shape is checked here
+    if not isinstance(look, dict) or not all(
+            k in LOOK_KEYS and isinstance(v, str) and re.fullmatch(r"[a-z0-9-]{1,20}", v) for k, v in look.items()):
+        raise ValueError(f"look must be an object with any of {', '.join(LOOK_KEYS)}")
+    req["look"] = look
     req["meet_url"] = f"https://meet.google.com/{code[1]}"
     return req
 
@@ -84,7 +91,8 @@ def image(env):
 def free_google():
     accounts = [v.removeprefix("jamie-google-") for v in docker("volume", "ls", "-q").split()
                 if v.startswith("jamie-google-")]
-    used = docker("ps", "-a", "--filter", "label=jamie.google", "--format", '{{.Label "jamie.google"}}').split()
+    used = docker("ps", "-a", "--filter", "label=jamie.google", "--filter", "status=created", "--filter", "status=running",
+                  "--format", '{{.Label "jamie.google"}}').split()
     free = [a for a in accounts if a not in used]
     if not free:
         raise LookupError("No free Google account. Sign one in: ./jamie.sh google-login <name>" if not accounts else
@@ -96,7 +104,15 @@ def start(req):
     env = req["env"]
     img = image(env)
     with start_lock:
+        prune()
         return create(req, img, free_google())
+
+
+def prune(keep=5):
+    """Exited Jamies are kept so `docker logs <id>` shows why they ended; remove all but the latest few."""
+    old = docker("ps", "-aq", "--filter", "label=jamie=1", "--filter", "status=exited").split()[keep:]  # newest first
+    if old:
+        docker("rm", *old)
 
 
 def create(req, img, google):
@@ -110,8 +126,8 @@ def create(req, img, google):
     for k in ("meet_url", "env", "personality", "agent"):
         flags += ["--label", f"jamie.{k}={req[k]}"]
     # shortcut: the workspace lives in the container and is deleted when Jamie leaves; add a volume per instance to keep work
-    docker("create", "--rm", "--init", "--shm-size", "2g", "--name", name, "--label", "jamie=1",
-           "-e", f"JAMIE_ENV={env}", *flags, img,
+    docker("create", "--init", "--shm-size", "2g", "--name", name, "--label", "jamie=1",
+           "-e", f"JAMIE_ENV={env}", "-e", f"JAMIE_LOOK={json.dumps(req['look'])}", *flags, img,
            "python3", "/app/bot.py", req["meet_url"], "--env", env,
            "--personality", req["personality"], "--agent", req["agent"])
     try:
