@@ -1170,11 +1170,26 @@ async def listen(page, agent):
             log("Couldn't save the meeting files:", e)
 
 
+async def others_in_call(page, people):
+    """How many people are in the call besides Jamie: Meet's tiles (Jamie has one), or the speakers heard
+    so far when that's more (big calls don't render every tile). None when Meet doesn't say."""
+    try:
+        # shortcut: a screen-share tile is told apart by its text ("Enter Full Screen", "... (Presentation)"); if Meet
+        # renames those, shares count as people, which only turns solo mode off
+        tiles = await page.evaluate("""() => new Set([...document.querySelectorAll('[data-participant-id]')]
+            .filter(e => !/full screen|presentation|presenting/i.test(e.innerText))
+            .map(e => e.dataset.participantId)).size""")
+    except Exception:
+        return None
+    return max(tiles - 1, len(people)) if tiles else None
+
+
 async def judged(judge, context, batch, state, people, page):
     start = time.monotonic()
     screen = describe(await on_screen(page))
-    verdict = await judge(context, batch, state["last_reply"], state["busy"], people, screen)
-    log(f"judge took {time.monotonic() - start:.1f}s for {len(batch)} line(s)")
+    others = await others_in_call(page, people)
+    verdict = await judge(context, batch, state["last_reply"], state["busy"], people, screen, others)
+    log(f"judge took {time.monotonic() - start:.1f}s for {len(batch)} line(s), {others} other(s) in the call")
     return verdict, batch
 
 

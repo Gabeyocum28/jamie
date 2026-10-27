@@ -14,7 +14,8 @@ From a Chrome extension you pick:
 **What it can do**
 - **Hears the call.** It reads Meet's live captions, with speaker names, and knows when it's being
   talked to. That covers misheard names ("Amy" for "Jamie"), follow-ups without its name, and
-  people talking *about* it rather than to it.
+  people talking *about* it rather than to it. When you're the only person in the call with it,
+  you don't need its name: anything you ask is for Jamie, unless you're clearly talking to someone else.
 - **Talks back.** Its voice goes into the call: offline by default, or ElevenLabs if you add a key.
   The avatar's mouth moves with the audio, and "Jamie, stop talking" cuts it off.
 - **Acts instantly.** Simple requests skip the AI agent entirely:

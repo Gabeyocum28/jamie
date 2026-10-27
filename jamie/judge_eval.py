@@ -75,6 +75,15 @@ CASES = [
     ("Hey Jamie, can we build out?", ["Gabe"], NOTHING, "wait"),
 ]
 
+# Just one person in the call with Jamie: what they ask is for Jamie, name or not (said, speakers, people besides Jamie, expected)
+SOLO = [
+    ("What's the capital of Australia?", ["Gabe"], 1, "request"),
+    ("Can you pull up a video about funny cats?", ["Gabe"], 1, "control:play-video"),
+    ("Mom, can you grab me a water? I'm on a call", ["Gabe"], 1, "none"),
+    ("Hey!", ["Gabe"], 1, "none"),
+    ("Sam, what did you think of the demo?", ["Gabe", "Sam"], 2, "none"),  # several people: still needs the name
+]
+
 
 async def main():
     judge = hearing.Judge("Jamie", {**bot.BUILTIN_CONTROLS, **ROOM_CONTROLS})
@@ -89,6 +98,14 @@ async def main():
         ok = got == want
         passed += ok
         print(f"{'ok ' if ok else 'NO '} {times[-1]:.1f}s  {got:22} {said!r}" + ("" if ok else f"  (wanted {want})"))
+    for said, people, others, want in SOLO:
+        start = time.monotonic()
+        v = await judge([], [(people[0], said)], people=people, screen=NOTHING, others=others)
+        times.append(time.monotonic() - start)
+        got = v["action"] + (f":{v['control']}" if v["action"] == "control" else "")
+        ok = got == want
+        passed += ok
+        print(f"{'ok ' if ok else 'NO '} {times[-1]:.1f}s  {got:22} {said!r} ({others} other)" + ("" if ok else f"  (wanted {want})"))
     await judge.close()
 
     # Notes: a short real exchange should come out as a decision and an owned action item
@@ -107,7 +124,7 @@ async def main():
     if not good:
         print(md)
     passed += good
-    print(f"judge: {passed}/{len(CASES) + 1} right, {sum(times) / len(times):.1f}s average per judgment")
+    print(f"judge: {passed}/{len(CASES) + len(SOLO) + 1} right, {sum(times) / len(times):.1f}s average per judgment")
     sys.exit(0 if passed == len(CASES) + 1 else 1)
 
 

@@ -194,9 +194,13 @@ class Judge:
         """Start the process and make one call, while Jamie joins, so the first real one is fast."""
         await self([], [("System", "(warm-up, nobody has spoken yet)")])
 
-    async def __call__(self, context, new, last_reply="", busy="", people=(), screen=""):
+    async def __call__(self, context, new, last_reply="", busy="", people=(), screen="", others=None):
         fmt = lambda ls: "\n".join(f"{s}: {t}" for s, t in ls)  # noqa: E731
-        prompt = (f"People in the call (heard so far): {', '.join(people) or 'unknown'}\n\n"
+        solo = (f"Only one person is in this call with {self.name}, so there's nobody else for them to talk to: "
+                f"a question or ask from them is a \"request\" to {self.name} even without its name, unless it's "
+                f"clearly for someone else (a phone call, someone in their room, another name) or "
+                f"they're thinking out loud. Greetings and chatter are still \"none\".\n\n") if others == 1 else ""
+        prompt = (f"{solo}People in the call (heard so far): {', '.join(people) or 'unknown'}\n\n"
                   f"{screen or 'Nothing is being shared.'}\n\n"
                   f"Earlier conversation:\n{fmt(context) or '(none)'}\n\n"
                   f"{self.name}'s last reply: {last_reply or '(none)'}\n"
