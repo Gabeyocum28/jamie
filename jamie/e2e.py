@@ -37,12 +37,14 @@ WORKSPACE = bot.WORKSPACE  # the bot's working folder in the current scenario
 
 
 async def launch(url, audio, **env):
-    """Start the bot on a fresh, temporary workspace: runs don't see each other's files (or the user's)."""
+    """Start the bot with a fresh, temporary workspace and learned shortcuts: runs don't see each other's
+    (or the user's)."""
     global WORKSPACE
     WORKSPACE = tempfile.mkdtemp(prefix="jamie-e2e-")
     return await asyncio.create_subprocess_exec(
         "python3", os.path.join(HERE, "bot.py"), url,
-        env={**os.environ, "JAMIE_TEST_AUDIO": audio, "JAMIE_WORKSPACE": WORKSPACE, **env},
+        env={**os.environ, "JAMIE_TEST_AUDIO": audio, "JAMIE_WORKSPACE": WORKSPACE,
+             "JAMIE_LEARNED": tempfile.mkdtemp(prefix="jamie-e2e-learned-"), **env},  # nothing learned in earlier runs
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
 
 

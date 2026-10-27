@@ -45,4 +45,6 @@ async def says(text):
 for odd in ('{"action": "show-answer"}', '{"action": "control:show-answer"}', '{"action": "", "control": "show-answer"}'):
     v = asyncio.run(says(odd))
     assert (v["action"], v["control"]) == ("control", "show-answer"), v
+v = asyncio.run(says('{"action": "none", "answer": "The capital of Australia is Canberra."}'))
+assert v["action"] == "request" and v["answer"], v  # an answer means it was a question for Jamie
 print("hearing OK")
