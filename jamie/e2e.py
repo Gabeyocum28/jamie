@@ -116,7 +116,7 @@ async def main():
     audio = "/tmp/jamie-test-request.wav"
     # The request, then a follow-up while the video is being shared (hearing once stopped during shares)
     timeline(audio, [(25, os.path.join(HERE, "test-request.wav")), (35, os.path.join(HERE, "test-followup.wav")),
-                     (30, os.path.join(HERE, "test-ide.wav"))])
+                     (30, os.path.join(HERE, "test-ide.wav")), (25, os.path.join(HERE, "test-question.wav"))])
     url = await new_meeting()
     print("e2e: meeting", url, flush=True)
     proc = await asyncio.create_subprocess_exec(
@@ -152,6 +152,10 @@ async def main():
         while time.monotonic() - asked < 90 and proc.returncode is None and not any("control: ide" in s for s in seen):
             await asyncio.sleep(2)
         editor = await stage_eval("!!document.querySelector('.monaco-workbench')")
+        # Fourth: a question only the agent can answer, said back out loud
+        asked = time.monotonic()
+        while time.monotonic() - asked < 120 and proc.returncode is None and not any("Canberra" in s and "heard myself" in s for s in seen):
+            await asyncio.sleep(2)
     finally:
         proc.terminate()
         await proc.wait()
@@ -172,6 +176,11 @@ async def main():
     print(f"e2e: {'ok ' if followup else 'NO '} the follow-up paused the video")
     print(f"e2e: {'ok ' if any('control: pause' in s for s in seen) else 'NO '} ...instantly, without the agent")
     print(f"e2e: {'ok ' if editor else 'NO '} \"open the code editor\" put VS Code on screen")
+    spoke = [s.split("heard myself:", 1)[1].strip() for s in seen if "heard myself:" in s]
+    print(f"e2e: {'ok ' if spoke else 'NO '} Jamie's voice reached the call (Meet captioned it: {spoke[:2]})")
+    answered = any("Canberra" in s for s in spoke)
+    print(f"e2e: {'ok ' if answered else 'NO '} the agent answered a question out loud (Canberra)")
+    stayed = stayed and bool(spoke) and answered
     stayed = stayed and editor
     stayed = stayed and followup and auto_fullscreen
     print(f"e2e: {'ok ' if stayed else 'NO '} still in the call and presenting 20s later")

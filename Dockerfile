@@ -13,7 +13,12 @@ RUN npm install -g @anthropic-ai/claude-code @openai/codex@0.162.1 @google/gemin
       @playwright/mcp@0.0.83
 
 # The image ships browsers but not the Python package; pin to the image's version so it finds them
-RUN pip install --no-cache-dir --break-system-packages playwright==1.63.0 websockets==15.0.1
+RUN pip install --no-cache-dir --break-system-packages playwright==1.63.0 websockets==15.0.1 piper-tts==1.3.0
+
+# Jamie's offline voice (Piper); ElevenLabs replaces it when ELEVENLABS_API_KEY is set
+RUN mkdir -p /opt/piper && for f in onnx onnx.json; do \
+      curl -fsSL -o /opt/piper/en_US-amy-medium.$f \
+        "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/amy/medium/en_US-amy-medium.$f"; done
 
 # VS Code in the browser, so Jamie can show code being written ("vibe coding") in its shared tab
 ARG TARGETARCH
