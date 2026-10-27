@@ -94,7 +94,8 @@ def main():
     # Learning: Jamie saves its own instant controls per room
     bot.LEARNED = os.path.join(root, "learned")
     for bad in [("Next Slide", "x", ["ArrowRight"], None), ("pause", "x", ["k"], None), ("ok", "x", None, None),
-                ("ok", "x", ["k"], "echo")]:
+                ("ok", "x", ["k"], "echo"), ("ok", "x", None, "echo pre{arg}"),
+                ("ok", "x", None, "python3 -c 'print({arg})'")]:
         try:
             bot.learn(*bad)
             raise AssertionError(f"learned {bad}")
@@ -106,8 +107,16 @@ def main():
     rc = bot.room_controls()
     assert rc["next-slide"]["keys"] == ["PageDown"] and "weather" in rc  # the room wins a clash; learned ones join
     assert "the weather somewhere" in bot.controls().values()
-    out = asyncio.run(bot.control(None, "weather", "Paris; touch /tmp/pwned"))
-    assert out == "weather in Paris; touch /tmp/pwned" and not os.path.exists("/tmp/pwned"), out  # arg is quoted
+    out = asyncio.run(bot.control(None, "weather", "Paris; touch /tmp/pwned $(touch /tmp/pwned2)"))
+    assert out == "weather in Paris; touch /tmp/pwned $(touch /tmp/pwned2)", out  # one argument, no shell
+    assert not os.path.exists("/tmp/pwned") and not os.path.exists("/tmp/pwned2")
+    bot.PERMS = "safe"
+    try:
+        asyncio.run(bot.control(None, "weather", "Paris"))
+        raise AssertionError("ran a command in safe mode")
+    except RuntimeError:
+        pass
+    bot.PERMS = "full"
 
     # The meeting's notes and transcript outlive the call
     bot.FILES = os.path.join(root, "files")

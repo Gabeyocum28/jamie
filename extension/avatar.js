@@ -37,7 +37,7 @@
     const av = { state: "listening", mouth: null, look: { ...DEFAULT, ...look }, draw };
     // Few, soft particles: busy noise is what video encoders blur into blocks
     const dust = Array.from({ length: 14 }, () => ({ x: Math.random() * 640, y: Math.random() * 480, r: Math.random() * 1.2 + 0.8, v: Math.random() * 4 + 2 }));
-    let bgCanvas = null, bgHue = 0, haloCanvas = null, haloHue = 0;
+    let bgCanvas = null, bgHue = 0, haloCanvas = null, haloHue = 0, ear = 0;
     let hues = null, speed = 1, clock = 0, level = 0, rings = [], lastRing = 0, last = performance.now();
     let lookX = 0, lookY = 0, lookTo = [0, 0], lookAt = 0, blinkAt = -1;
 
@@ -298,7 +298,8 @@
         ctx.fillStyle = g;
         ctx.fill();
       });
-      glow(0, 0, R * 0.55, [[0, `hsla(${hues[2]}, ${S}%, 88%, ${0.16 + 0.3 * level})`], [1, "hsla(0,0%,0%,0)"]]);
+      ear += ((av.hearing ? 1 : 0) - ear) * 0.12;  // brighten while people are talking to it
+      glow(0, 0, R * (0.55 + 0.15 * ear), [[0, `hsla(${hues[2]}, ${S}%, 88%, ${0.16 + 0.3 * level + 0.25 * ear})`], [1, "hsla(0,0%,0%,0)"]]);
 
       // Thinking: sparks on a tilted orbit
       const think = Math.max(0, (speed - 1.6) / 1);

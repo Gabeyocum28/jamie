@@ -49,7 +49,9 @@ async function list() {
     const links = el("div", { className: "links" });
     if (j.screen) links.append(el("a", { href: j.screen, target: "_blank", className: "watch", textContent: "Watch screen" }));
     links.append(...Object.entries(j.apps).map(([port, href]) => el("a", { href, target: "_blank", textContent: `:${port}` })));
-    li.append(top, el("div", { className: "meta", textContent: j.status ? `${code} · ${j.status}` : code }), links);
+    li.append(top, el("div", { className: "meta", textContent: j.status ? `${code} · ${j.status}` : code }));
+    if (j.heard) li.append(el("div", { className: "heard", textContent: `Heard ${j.heard}` }));
+    li.append(links);
     return li;
   }));
   if (!jamies.length) $("jamies").replaceChildren(el("li", { className: "empty", textContent: "No Jamies running." }));

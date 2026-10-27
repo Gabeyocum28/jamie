@@ -56,8 +56,15 @@ class Captions:
         """Take a CAPTIONS_JS snapshot; return [(speaker, text)] for words finished by a pause."""
         now = time.monotonic() if now is None else now
         lines = []
+        if blocks is not None:  # a block gone from the page (scrolled away) still said its last words
+            here = {b["id"] for b in blocks}
+            for gone in [i for i in self.blocks if i not in here]:
+                st = self.blocks.pop(gone)
+                new = fresh(st["said"], st["text"])
+                if new and (st["name"] != "You" or self.hear_self) and not st["name"].endswith("Presentation"):
+                    lines.append((st["name"], " ".join(new)))
         for b in blocks or []:
-            st = self.blocks.setdefault(b["id"], {"text": "", "changed": now, "said": []})
+            st = self.blocks.setdefault(b["id"], {"text": "", "changed": now, "said": [], "name": b["name"]})
             if b["text"] != st["text"]:
                 st["text"], st["changed"] = b["text"], now
             elif now - st["changed"] >= PAUSE:
@@ -97,7 +104,9 @@ something.
   lyrics" is a request).
 - "stop_sharing": they want {name} to stop sharing its screen. "reset": start over with a fresh
   memory. "leave": they want {name} to leave the call.
-- "none": everything else, including talking ABOUT {name} rather than to it, and small talk.
+- "none": everything else, including talking ABOUT {name} rather than to it, small talk, and
+  questions people ask each other or themselves without addressing {name}, even ones you could
+  answer ("What's the capital of Australia? I always forget" is "none").
   When unsure, choose "none".
 
 "ack" is a very short, natural reply {name} says right away for request/stop_sharing/reset/leave
@@ -105,33 +114,39 @@ something.
 done ("Done", "It's fullscreen now"). Leave it empty otherwise. Each message is a new
 moment in the same call; judge only its NEW lines. {busy}
 
+For a "request" that is a quick question with a short, stable answer you are certain of (a capital
+city, simple arithmetic, a definition), also put the answer in "answer" as a full sentence that restates the question ("The capital of
+Australia is Canberra.", not just "Canberra."), and {name}
+says it right away instead of starting its slower assistant. Leave "answer" empty for everything
+else: anything current (news, weather, prices, "latest"), about the screen or the meeting, needing
+a tool, or anything you aren't sure of.
+
 Instant controls (name: what it does):
 {controls}
 
-Reply with only one line of JSON: {{"action": "...", "request": "...", "control": "...", "arg": "...", "ack": "..."}}"""
+Reply with only one line of JSON: {{"action": "...", "request": "...", "control": "...", "arg": "...", "answer": "...", "ack": "..."}}"""
 
 
 def verdict(text):
     """The judge's JSON reply, even wrapped in a code fence or a sentence."""
     v = json.loads(text[text.index("{"):text.rindex("}") + 1])
     return {"action": v.get("action", "none"), "request": v.get("request") or "", "ack": v.get("ack") or "",
-            "control": v.get("control") or "", "arg": v.get("arg") or ""}
+            "control": v.get("control") or "", "arg": v.get("arg") or "", "answer": v.get("answer") or ""}
 
 
 class Judge:
     """Asks a fast model whether the new lines are for Jamie. Falls back to the wake word.
 
-    One Claude process stays open for the whole call (stream-json in and out), so a judgment
-    doesn't pay for starting Claude, and the first one doesn't land on a cold start. No extended
+    Every judgment gets a fresh Claude process: one that has seen its own earlier answers starts
+    copying them (one early miss turned a whole run of controls into requests). The next process is
+    started as soon as one is used, so a judgment never waits for Claude to start. No extended
     thinking and plain JSON text (not --json-schema, which adds a round trip): ~1s instead of 3-5s."""
-
-    RESTART_AFTER = 15  # judgments: each one gets its own context, so a long history only adds noise
 
     def __init__(self, name, controls=None, model="haiku", timeout=30):
         self.name, self.model, self.timeout = name, model, timeout
         self.controls = controls or {}
         self.wake = re.compile(rf"\b({re.escape(name)}|jaime|jamey|amy)\b", re.I)  # captions mishear it
-        self.proc, self.calls, self.lock = None, 0, asyncio.Lock()  # one message at a time per process
+        self.proc, self.lock = None, asyncio.Lock()  # proc: the started, unused process for the next judgment
 
     def command(self):
         system = JUDGE_PROMPT.format(name=self.name, busy="",
@@ -140,23 +155,28 @@ class Judge:
                 "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
                 "--system-prompt", system]
 
+    async def spawn(self):
+        return await asyncio.create_subprocess_exec(
+            *self.command(), stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL, limit=2**22, env={**os.environ, "MAX_THINKING_TOKENS": "0"})
+
     async def ask(self, prompt):
-        if not self.proc or self.proc.returncode is not None or self.calls >= self.RESTART_AFTER:
-            if self.proc and self.proc.returncode is None:
-                self.proc.kill()
-            self.proc = await asyncio.create_subprocess_exec(
-                *self.command(), stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL, limit=2**22, env={**os.environ, "MAX_THINKING_TOKENS": "0"})
-            self.calls = 0
-        self.calls += 1
-        msg = {"type": "user", "message": {"role": "user", "content": prompt}}
-        self.proc.stdin.write((json.dumps(msg) + "\n").encode())
-        await self.proc.stdin.drain()
-        while line := await self.proc.stdout.readline():
-            event = json.loads(line)
-            if event.get("type") == "result":
-                return verdict(event.get("result") or "")
-        raise RuntimeError("judge process ended")
+        if not self.proc or self.proc.returncode is not None:
+            self.proc = await self.spawn()
+        proc, self.proc = self.proc, await self.spawn()  # this one answers; the next is already starting
+        try:
+            msg = {"type": "user", "message": {"role": "user", "content": prompt}}
+            proc.stdin.write((json.dumps(msg) + "\n").encode())
+            await proc.stdin.drain()
+            while line := await proc.stdout.readline():
+                event = json.loads(line)
+                if event.get("type") == "result":
+                    return verdict(event.get("result") or "")
+            raise RuntimeError("judge process ended")
+        finally:
+            if proc.returncode is None:
+                proc.kill()
+                await proc.wait()
 
     async def close(self):
         if self.proc and self.proc.returncode is None:
@@ -185,9 +205,7 @@ class Judge:
                 verdict["action"] = "request"  # not a control we have: let the agent figure it out
             return verdict
         except Exception:  # no Claude login, timeout, bad output: fall back to the wake word
-            if self.proc and self.proc.returncode is None:
-                self.proc.kill()  # out of sync now; the next call starts a fresh one
-            self.proc = None
+            await self.close()  # out of sync now; the next call starts a fresh one
             text = " ".join(t for _, t in new)
             if self.wake.search(text):
                 return {"action": "request", "request": text, "ack": "On it.", "control": "", "arg": ""}

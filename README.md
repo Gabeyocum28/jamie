@@ -177,7 +177,8 @@ the Jamie card in `chrome://extensions`.
    | "Hey Jamie, play a video about funny cats" | Searches YouTube, shares it fullscreen, skips ads (~8s, no agent) |
    | "Jamie, pause" / "play" / "scroll down" / "go back" | Instant |
    | "Jamie, play **that** Guardians of the Galaxy video" | Clicks it on the shared screen |
-   | "Jamie, what's the capital of Australia?" | The agent answers, out loud and in chat |
+   | "Jamie, what's the capital of Australia?" | Answered out loud in about a second (the judge knows it, so no agent needed) |
+   | "Jamie, what's the weather in Denver right now?" | The agent looks it up, then answers out loud and in chat |
    | "Hey Jamie, can we start vibe coding? Let's make a to-do app" | Opens VS Code on screen and builds it live |
    | "Jamie, show the meeting notes" | Live notes, updating on screen as people talk |
    | "Jamie, let's play space trivia" (fun room) | Builds a game show; "next question", "reveal the answer" are instant |
@@ -187,6 +188,9 @@ the Jamie card in `chrome://extensions`.
 
    - **Follow-ups** right after Jamie answers don't need its name ("make it red instead").
    - **Talking *about* Jamie** ("Jamie is a fun tool we built") is ignored.
+   - **Interrupting:** say "Jamie…" while it's talking and it stops to listen.
+   - **The orb reacts:** it brightens while people are talking, turns purple with sparks while
+     working, and its mouth moves when it speaks.
 5. Or type in the Meet chat: the trigger, then your request:
 
 ```
@@ -210,7 +214,8 @@ transcript. Whenever someone pauses, a fast model (Claude Haiku, kept running, ~
 new lines. It also sees who's in the call, what's on the shared screen and what Jamie just said,
 and picks one of these:
 - **an instant control:** done by the bot directly, in about half a second
-- **a request:** rewritten as one clear instruction for the agent
+- **a request:** rewritten as one clear instruction for the agent. If it's a quick, stable fact
+  ("capital of Australia?", "two plus two?"), the judge answers it itself, in about a second.
 - **still talking:** wait for the rest
 - **stop sharing / reset / leave**
 - **nothing for Jamie**
@@ -273,6 +278,7 @@ team agrees. Every room depends on it.
 
 ```
 README.md               this file
+DEMO.md                 a tested 6-minute demo script, with what to say and what happens
 .env.example            template for your .env (settings and secrets, gitignored)
 jamie.sh                the command for everything: setup, logins, controller, join, test, shell
 Dockerfile              jamie-base: Chromium, virtual screen, the bot, and the three agent CLIs.
@@ -301,6 +307,7 @@ controller/
   test_server.py        self-check: request validation
   Dockerfile            the controller's image (Python and the Docker CLI)
 extension/              the Chrome extension (manifest, popup.html, popup.js)
+  test_popup.py         checks the popup against a fake controller (python3 extension/test_popup.py)
   avatar.js             Jamie's camera: a glowing orb with a face. The popup uses it for the live
                         preview, and the image copies it in so the bot can show it in Meet
 environments/           rooms; each folder is one. README.md explains everything about them

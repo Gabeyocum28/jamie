@@ -118,6 +118,9 @@ class Notes:
             proc.kill()
             await proc.wait()
             return self.md
+        except asyncio.CancelledError:  # someone waiting on us gave up: don't leave it running
+            proc.kill()
+            raise
         md = out.decode(errors="replace").strip()
         md = re.sub(r"^```\w*\n|\n```$", "", md)  # sometimes fenced
         if "## Summary" in md and "## Action items" in md:  # keep the old notes over a bad answer

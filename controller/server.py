@@ -167,13 +167,29 @@ def status(log_lines):
     return state
 
 
+def logs(name):
+    try:
+        return docker("logs", "--tail", "200", name).splitlines()
+    except RuntimeError:  # it went away between listing and reading
+        return []
+
+
+def last(log_lines, marker):
+    """The text after marker on the last log line that has it ("" if none)."""
+    for line in reversed(log_lines):
+        if marker in line:
+            return line.split(marker, 1)[1].strip()[:160]
+    return ""
+
+
 def info(c):
     labels = c["Config"]["Labels"]
     port = {int(k.split("/")[0]): v[0]["HostPort"] for k, v in (c["NetworkSettings"]["Ports"] or {}).items() if v}
     return {
         "id": c["Name"].lstrip("/"),
         "state": c["State"]["Status"],
-        "status": status(docker("logs", "--tail", "200", c["Name"].lstrip("/")).splitlines()),
+        **(lambda lines: {"status": status(lines), "heard": last(lines, " heard "),
+                          "said": last(lines, " -> ")})(logs(c["Name"].lstrip("/"))),
         **{k: labels.get(f"jamie.{k}") for k in ("meet_url", "env", "personality", "agent", "google")},
         "screen": f"http://{HOST}:{port[6080]}/vnc.html" if 6080 in port else None,
         "apps": {p: f"http://{HOST}:{port[p]}" for p in PORTS[1:] if p in port},

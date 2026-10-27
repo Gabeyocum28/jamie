@@ -77,7 +77,9 @@ def core_prompt(cwd):
         "You can teach yourself shortcuts. When you've done something people will likely ask for again and it "
         "comes down to key presses in the shared tab or one command, save it as an instant control so next time "
         "it happens in a second without you: `python3 /app/bot.py --learn <name> --description '<what people "
-        "would say>' --keys <Key> [<Key>...]` or `--run '<command, {arg} = what they asked for>'`. Also do this "
+        "would say>' --keys <Key> [<Key>...]` or `--run '<command>'` (no shell: no pipes or &&; `{arg}` as a "
+        "word of its own becomes what they asked for; put any script it needs in /learned/, which is kept "
+        "for this room, unlike your working directory). Also do this "
         "whenever someone asks you to learn or remember a shortcut. "
         "Don't tell people you can't do something on the computer or in the browser: try, and if one way "
         "fails, try another."
@@ -158,14 +160,14 @@ async def click_first(page, patterns, timeout=3000):
     return None
 
 
-async def in_call(page):
+async def in_call(page):  # True, False, or None when the page didn't answer (frozen: not proof of leaving)
     """Meet's Leave button is on the page. A plain DOM check on purpose: get_by_role skips elements
     that a dialog hides from screen readers, which once made a share dialog look like the call ending."""
     try:
         return await asyncio.wait_for(
             page.evaluate("""() => !!document.querySelector('button[aria-label*="leave call" i]')"""), 5)
     except Exception:
-        return False
+        return None
 
 
 def leave_button(page):
@@ -222,7 +224,7 @@ async def pin_meet_tab(page):
         else:
             await cdp.send("Fetch.continueRequest", {"requestId": e["requestId"]})
 
-    cdp.on("Fetch.requestPaused", lambda e: asyncio.create_task(paused(e)))
+    cdp.on("Fetch.requestPaused", lambda e: background(paused(e)))
     # Only whole-page loads pause here; Meet's own traffic isn't touched
     await cdp.send("Fetch.enable", {"patterns": [{"urlPattern": "*", "resourceType": "Document", "requestStage": "Request"}]})
 
@@ -252,7 +254,8 @@ async def send(page, text):
 
 async def post(page, text):
     # Never echo the trigger, or Jamie would answer itself.
-    text = re.sub(re.escape(TRIGGER), TRIGGER.lstrip("/"), text or "", flags=re.I).strip() or "(no output)"
+    # (a zero-width space breaks it whatever it looks like: the chat reader must not see it)
+    text = re.sub(re.escape(TRIGGER), TRIGGER[:1] + "\u200b" + TRIGGER[1:], text or "", flags=re.I).strip() or "(no output)"
     chunks = [text[i:i + CHUNK] for i in range(0, len(text), CHUNK)]
     if len(chunks) > MAX_CHUNKS:
         chunks = chunks[:MAX_CHUNKS]
@@ -283,8 +286,8 @@ LOCK_TITLE_JS = """(() => {
 
 async def show(page, url):
     """Screen-share url from a separate stage tab and return the tab. 'off' just stops sharing."""
-    old = [p for p in page.context.pages if p is not page]
-    for p in old:
+    old = [p for p in page.context.pages if p is not page and await p.title() == STAGE_TITLE]
+    for p in old:  # only shared tabs: the agent may be working in its own
         await p.close()  # closing the shared tab ends the presentation
     if url.lower() == "off":
         await avatar_fps(page, 24)
@@ -542,15 +545,30 @@ class Agent:
     def __init__(self, name, servers):
         self.name, self.servers = name, servers
         self.has_session = False  # after the first request, continue the same conversation
-        self.proc = None  # claude: one process for the whole call (see run_claude)
-        self.cancelled = False
+        self.proc = None          # claude: one process for the whole call; codex/gemini: the current run
+        self.running = False      # a request is in progress
+        self.stopped = ""         # why the current request was stopped on purpose ("cancel", "reset")
+        self.generation = 0       # bumped by reset(): a run that started before it mustn't revive the session
 
-    async def cancel(self):
-        """Stop the current task. The conversation is kept: the next request continues it."""
+    async def _kill(self):
         if self.proc and self.proc.returncode is None:
-            self.cancelled = True
             self.proc.kill()
             await self.proc.wait()
+        self.proc = None
+
+    async def cancel(self):
+        """Stop the current request. The conversation is kept: the next request continues it."""
+        if self.running:
+            self.stopped = "cancel"
+            await self._kill()
+
+    async def reset(self):
+        """Forget the conversation: the next request starts a new one."""
+        self.generation += 1
+        self.has_session = False
+        if self.running:
+            self.stopped = "reset"
+        await self._kill()
 
     def command(self, prompt=None):
         full, cont = PERMS == "full", self.has_session
@@ -577,50 +595,53 @@ class Agent:
                 *self.command(), cwd=WORKSPACE, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL, limit=2**25)  # events carry page snapshots: long lines
 
-    async def reset(self):
-        """Forget the conversation: the next request starts a new one."""
-        self.has_session = False
-        if self.proc and self.proc.returncode is None:
-            self.proc.kill()
-            await self.proc.wait()
-        self.proc = None
-
     async def run_claude(self, prompt, progress=None):
         await self.start()
+        proc = self.proc
         msg = {"type": "user", "message": {"role": "user", "content": prompt}}
-        self.proc.stdin.write((json.dumps(msg) + "\n").encode())
-        await self.proc.stdin.drain()
         try:
+            proc.stdin.write((json.dumps(msg) + "\n").encode())
+            await proc.stdin.drain()
             async with asyncio.timeout(TIMEOUT):
-                while line := await self.proc.stdout.readline():
+                while line := await proc.stdout.readline():
                     event = json.loads(line)
                     if progress and event.get("type") == "assistant":
                         for block in event.get("message", {}).get("content", []):
                             if block.get("type") == "tool_use" and (step := narrate(block)):
                                 progress(step)
                     if event.get("type") == "result":
-                        self.has_session = True
                         out = (event.get("result") or "").strip()
                         log(self.name, "->", out[:500])
                         return out if not event.get("is_error") else f"claude hit an error: {out[-400:]}"
         except TimeoutError:
-            self.proc.kill()  # can't stop it mid-task otherwise; the next request continues the conversation
-            await self.proc.wait()
-            self.proc = None
+            await self._kill()  # can't stop it mid-task otherwise; the next request continues the conversation
             return f"Timed out after {TIMEOUT}s."
+        except BaseException:
+            # Anything else mid-turn (bad output, a cancelled task): never leave it running, or the next
+            # request would read this one's answer
+            await self._kill()
+            raise
         self.proc = None  # it exited; the next request starts it again (with --continue)
-        if self.cancelled:
-            self.cancelled = False
-            return ""  # stopped on purpose: nothing to report
-        return "claude stopped unexpectedly. Try again."
+        return "" if self.stopped else "claude stopped unexpectedly. Try again."
 
     async def run(self, prompt, progress=None):
         log(self.name, "<-", prompt)
-        if self.name == "claude":
-            return await self.run_claude(prompt, progress)
+        self.running, self.stopped, generation = True, "", self.generation
+        try:
+            out = await (self.run_claude(prompt, progress) if self.name == "claude" else self.run_once(prompt))
+            if self.stopped:
+                return ""  # cancelled or reset on purpose: nothing to report
+            if generation == self.generation:  # (a reset during the run means: don't continue it)
+                self.has_session = True
+            return out
+        finally:
+            self.running = False
+
+    async def run_once(self, prompt):
+        """codex / gemini: one process per request."""
         if os.path.exists(CODEX_LAST):
             os.remove(CODEX_LAST)
-        proc = await asyncio.create_subprocess_exec(
+        self.proc = proc = await asyncio.create_subprocess_exec(
             *self.command(prompt), cwd=WORKSPACE,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
@@ -630,8 +651,10 @@ class Agent:
         try:
             out, err = await asyncio.wait_for(proc.communicate(stdin), TIMEOUT)
         except asyncio.TimeoutError:
-            proc.kill()
+            await self._kill()
             return f"Timed out after {TIMEOUT}s."
+        finally:
+            self.proc = None
         out, err = out.decode(errors="replace").strip(), err.decode(errors="replace").strip()
         if proc.returncode != 0:
             log(self.name, "failed:", err[-1000:] or out[-1000:])
@@ -640,7 +663,6 @@ class Agent:
             with open(CODEX_LAST) as f:
                 out = f.read().strip()
         log(self.name, "->", out[:500])
-        self.has_session = True
         return out
 
 
@@ -689,7 +711,8 @@ BUILTIN_CONTROLS = {
     "open": "click something visible on the shared screen (\"play that video\", \"open the second link\"); "
             "arg = its name exactly as listed under Visible",
     "play-video": "search YouTube and play the top video fullscreen; arg = what to search for",
-    "show": "open a website on the shared screen; arg = its full URL",
+    "show": "open a website or page on the shared screen (\"pull up the Wikipedia page for X\"); arg = its full URL, "
+            "which you can work out yourself (e.g. https://en.wikipedia.org/wiki/X)",
     "ide": "open the code editor (VS Code) on the shared screen",
     "quiet": "stop talking (Jamie stops speaking right away)",
     "notes": "show the live meeting notes (summary, decisions, action items) on the shared screen",
@@ -747,7 +770,8 @@ def keep_meeting(started):
     """Save this meeting's notes and transcript to FILES/<date time>/ (the workspace goes when Jamie does)."""
     if not os.path.isdir(FILES):
         return None
-    folder = os.path.join(FILES, time.strftime("%Y-%m-%d %H-%M", time.localtime(started)))
+    # to the second, plus the container: two Jamies in one room mustn't overwrite each other
+    folder = os.path.join(FILES, time.strftime("%Y-%m-%d %H-%M-%S", time.localtime(started)) + f" {socket.gethostname()[:8]}")
     os.makedirs(folder, exist_ok=True)
     if os.path.exists(os.path.join(WORKSPACE, "notes.md")):
         shutil.copy(os.path.join(WORKSPACE, "notes.md"), folder)
@@ -786,6 +810,13 @@ def learn(name, description, keys=None, run=None):
         raise ValueError(f"{name!r} is built in already")
     if bool(keys) == bool(run):
         raise ValueError("give either --keys or --run")
+    if run:  # run without a shell: {arg} may only be a whole word, so what people say can't become code
+        try:
+            words = shlex.split(run)
+        except ValueError as e:
+            raise ValueError(f"--run: {e}")
+        if any("{arg}" in w and w != "{arg}" for w in words):
+            raise ValueError("--run: {arg} must be a word of its own (no quotes around it, not inside other text)")
     path = os.path.join(LEARNED, "controls.json")
     learned = read_controls(path)
     learned[name] = {"description": description, **({"keys": keys} if keys else {"run": run})}
@@ -831,11 +862,17 @@ async def control(page, name, arg=""):
     """Do an instant control on the shared tab. Returns what happened."""
     if name in room_controls():
         c = room_controls()[name]
-        if "run" in c:  # a command; {arg} becomes the (shell-quoted) argument
-            proc = await asyncio.create_subprocess_shell(
-                c["run"].replace("{arg}", shlex.quote(arg or "")), cwd=WORKSPACE,
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
-            out = (await asyncio.wait_for(proc.communicate(), 30))[0].decode(errors="replace").strip()
+        if "run" in c:  # a command, run without a shell; {arg} (a whole word) becomes one argument
+            if PERMS != "full":
+                raise RuntimeError("commands are off in safe mode")
+            words = [arg or "" if w == "{arg}" else w for w in shlex.split(c["run"])]
+            proc = await asyncio.create_subprocess_exec(*words, cwd=WORKSPACE,
+                                                        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+            try:
+                out = (await asyncio.wait_for(proc.communicate(), 30))[0].decode(errors="replace").strip()
+            except (TimeoutError, asyncio.CancelledError):
+                proc.kill()
+                raise
             if proc.returncode:
                 raise RuntimeError(out[-200:] or f"exit {proc.returncode}")
             return out[-300:] or "Done."
@@ -882,6 +919,7 @@ async def control(page, name, arg=""):
         await show(page, "file://" + os.path.join(WORKSPACE, "notes.html"))
         return "The meeting notes are on screen."
     if name == "quiet":
+        speaking["hush"] += 1
         await page.evaluate("window.__jamieVoice && window.__jamieVoice.stop()")
         return "Quiet."
     return await video(page, name)
@@ -904,14 +942,14 @@ async def run_control(page, name, arg):
 async def act(page, agent, queue, action, request, ack, control_name="", arg=""):
     """Carry out a command from chat or speech. Returns True when Jamie should leave."""
     if action == "control" and control_name == "cancel":
-        if agent.proc and agent_busy(queue):
+        if agent.running:
             await agent.cancel()
             speak_soon(page, "Okay, I stopped.")
             await send(page, "Okay, I stopped.")
             log("control: cancel -> stopped the agent")
         return False
     if action == "control":  # in the background: listening goes on while e.g. YouTube loads
-        asyncio.create_task(run_control(page, control_name, arg))
+        background(run_control(page, control_name, arg))
         return False
     if ack:
         speak_soon(page, ack)
@@ -935,6 +973,7 @@ async def act(page, agent, queue, action, request, ack, control_name="", arg="")
         await agent.reset()
     elif action == "request":
         await queue.put(request)
+
     return False
 
 
@@ -975,10 +1014,11 @@ async def listen(page, agent):
     warm = asyncio.create_task(warm_up())  # noqa: F841 (runs while Jamie finishes joining)
     await agent.start()
     if VOICE:
-        asyncio.create_task(VOICE_ENGINE.warm_up())  # load the voice model before the first reply
+        background(VOICE_ENGINE.warm_up())  # load the voice model before the first reply
     await chat_box(page)
     await captions_on(page)
     last_check = last_beat = last_skip = time.monotonic()
+    live, hearing_now = {}, False  # caption text per block as of the last check; whether people are talking
     learned_file = os.path.join(LEARNED, "controls.json")
     learned_seen = os.path.exists(learned_file) and os.path.getmtime(learned_file)
 
@@ -998,7 +1038,8 @@ async def listen(page, agent):
     gone = 0  # consecutive checks without the Leave button
     try:
         while True:
-            gone = 0 if await in_call(page) else gone + 1
+            here = await in_call(page)
+            gone = gone + 1 if here is False else 0 if here else gone
             if gone >= 10:  # ~3s: not just a dialog or Meet redrawing
                 log("Call ended or Jamie was removed. Meet showed:", page.url)
                 try:
@@ -1050,6 +1091,18 @@ async def listen(page, agent):
                 last_beat = time.monotonic()
                 log(f"listening: captions {'on' if snapshot is not None else 'NOT FOUND'}, "
                     f"{len(snapshot or [])} caption block(s) on screen, busy with: {state['busy'][:60] or 'nothing'}")
+            # Live caption changes (before a line is finished): barge-in and the avatar's "someone's talking"
+            talking = [b for b in snapshot or [] if live.get(b["id"]) != b["text"] and not b["name"].endswith("Presentation")
+                       and (b["name"] != "You" or (TEST_AUDIO and not said_by_me(b["text"][-80:])))]
+            # Barge-in needs NEW words with its name: Meet keeps re-punctuating the request Jamie is answering
+            added = [b["text"][len(os.path.commonprefix([live.get(b["id"], ""), b["text"]])):] for b in talking]
+            live = {b["id"]: b["text"] for b in snapshot or []}
+            if added and voice_lock.locked() and any(judge.wake.search(a) for a in added):
+                await page.evaluate("window.__jamieVoice && window.__jamieVoice.stop()")  # let them talk
+                log("Stopped talking: someone said my name.")
+            if bool(talking) != hearing_now:
+                hearing_now = bool(talking)
+                await page.evaluate("h => window.__jamieAvatar && (window.__jamieAvatar.hearing = h)", hearing_now)
             lines = caps.feed(snapshot)
             if TEST_AUDIO:  # Jamie hears itself in tests: what it says while talking isn't a request
                 mine = [ln for ln in lines if ln[0] == "You" and said_by_me(ln[1])]
@@ -1070,7 +1123,7 @@ async def listen(page, agent):
                 verdict, batch = judging.result()
                 judging = None
                 log("judge:", verdict)
-                if verdict["action"] in ("none", "leave") and not state["busy"]:
+                if verdict["action"] not in ("wait", "request") and not state["busy"]:  # nothing for the agent: stop "thinking"
                     await avatar(page, "listening")
                 if verdict["action"] == "wait" and gave_up:
                     # They stopped talking: a vague request still goes to the agent, which can ask what they meant
@@ -1085,6 +1138,14 @@ async def listen(page, agent):
                         request = f"{batch[-1][0]} asked out loud: {request}"
                     if verdict["action"] == "request":  # the agent sees what's on the shared screen too
                         request += f"\n\n(On the shared screen right now: {describe(await on_screen(page))})"
+                    if verdict["action"] == "request" and verdict.get("answer"):  # the judge knew it: no agent needed
+                        log("quick answer:", verdict["answer"])
+                        speak_soon(page, verdict["answer"])
+                        await send(page, verdict["answer"])
+                        state["last_reply"] = verdict["answer"]
+                        if not state["busy"]:
+                            await avatar(page, "listening")
+                        continue
                     if await act(page, agent, queue, verdict["action"], request, verdict["ack"], verdict["control"],
                                  verdict.get("arg", "")):
                         return
@@ -1193,7 +1254,7 @@ async def read_captions(page):
 NOTES = None  # notes.Notes for the current call, set in listen()
 VOICE_ENGINE = voice.Voice()
 voice_lock = asyncio.Lock()
-speaking = {"until": 0.0, "said": []}  # test mode: what Jamie said lately, so its own voice isn't a request
+speaking = {"until": 0.0, "said": [], "hush": 0}  # hush: bumped by "stop talking", drops queued speech too  # test mode: what Jamie said lately, so its own voice isn't a request
 
 
 def said_by_me(text):
@@ -1210,10 +1271,13 @@ async def speak(page, text):
     """Say text into the call (one thing at a time). Never raises: speech is a nicety."""
     if not (VOICE and text and VOICE_ENGINE.available()):
         return
+    hush = speaking["hush"]
     try:
         speaking["said"] = speaking["said"][-9:] + [(time.monotonic(), text)]
         audio = await VOICE_ENGINE.synth(text)
         async with voice_lock:
+            if speaking["hush"] != hush:  # "stop talking" came after this was queued
+                return
             speaking["until"] = float("inf")
             await page.evaluate("b => window.__jamieVoice && window.__jamieVoice.ctx && window.__jamieVoice.say(b)",
                                 base64.b64encode(audio).decode())
@@ -1223,8 +1287,18 @@ async def speak(page, text):
         speaking["until"] = time.monotonic()
 
 
+TASKS = set()  # fire-and-forget tasks: a reference keeps them from being garbage-collected mid-run
+
+
+def background(coro):
+    task = asyncio.create_task(coro)
+    TASKS.add(task)
+    task.add_done_callback(TASKS.discard)
+    return task
+
+
 def speak_soon(page, text):
-    asyncio.create_task(speak(page, text))
+    background(speak(page, text))
 
 
 def agent_busy(queue):

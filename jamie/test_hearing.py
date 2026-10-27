@@ -24,6 +24,9 @@ assert run([(0, [("1", "Ana", "one two three four five")]), (2, [("1", "Ana", "o
 assert run([(0, [("1", "Ana", "hi"), ("2", "Bo", "yo"), ("3", "You", "hello")]),
             (2, [("1", "Ana", "hi"), ("2", "Bo", "yo"), ("3", "You", "hello")])]) == [("Ana", "hi"), ("Bo", "yo")]
 assert run([(0, None), (2, None)]) == []  # captions off
+# A block that scrolls away before its pause still counts
+assert run([(0, [("1", "Ana", "Jamie pause the video")]), (0.5, [("2", "Bo", "hi")]), (3, [("2", "Bo", "hi")])]) == \
+    [("Ana", "Jamie pause the video"), ("Bo", "hi")]
 # A shared video's sound gets captioned too; it isn't anyone talking
 assert run([(0, [("1", "Your Presentation", "save 30 percent")]), (2, [("1", "Your Presentation", "save 30 percent")]),
             (0, [("2", "Ana's Presentation", "intro music")]), (2, [("2", "Ana's Presentation", "intro music")])]) == []
@@ -33,5 +36,5 @@ j = hearing.Judge("Jamie")
 j.command = lambda: ["false"]
 assert asyncio.run(j([], [("Ana", "Jaime, pull up the video")]))["action"] == "request"
 assert asyncio.run(j([], [("Ana", "the API returns JSON")]))["action"] == "none"
-assert hearing.verdict('```json\n{"action": "leave", "ack": "Bye!"}\n```') == {"action": "leave", "request": "", "ack": "Bye!", "control": "", "arg": ""}
+assert hearing.verdict('```json\n{"action": "leave", "ack": "Bye!"}\n```') == {"action": "leave", "request": "", "ack": "Bye!", "control": "", "arg": "", "answer": ""}
 print("hearing OK")
