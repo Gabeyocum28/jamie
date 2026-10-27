@@ -21,7 +21,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 TIMEOUT = 420
 
 
-def timeline(out, parts):
+def timeline(out, parts, tail=120):
     """One recording from [(seconds of silence, wav file), ...]. Chromium loops it, so it ends in a long silence."""
     with wave.open(out, "wb") as w:
         for i, (pause, src) in enumerate(parts):
@@ -30,7 +30,7 @@ def timeline(out, parts):
                     w.setparams(r.getparams())
                 gap = int(pause * r.getframerate()) * r.getsampwidth() * r.getnchannels()
                 w.writeframes(b"\0" * gap + r.readframes(r.getnframes()))
-        w.writeframes(b"\0" * (120 * 16000 * 2))
+        w.writeframes(b"\0" * (tail * 16000 * 2))
 
 
 WORKSPACE = bot.WORKSPACE  # the bot's working folder in the current scenario
@@ -300,6 +300,74 @@ async def room(name):
     print("e2e OK")
 
 
+async def code_room():
+    """./jamie.sh e2e --env code: build a game live in the Studio, playable fast, then change it on request."""
+    audio = "/tmp/jamie-test-code.wav"
+    timeline(audio, [(25, os.path.join(HERE, "test-code-0.wav")), (130, os.path.join(HERE, "test-code-1.wav"))], tail=300)
+    url = await new_meeting()
+    print("e2e: meeting", url, flush=True)
+    proc = await launch(url, audio, JAMIE_ENV="code")
+    seen, state, first_app, asked = [], {}, None, None
+
+    async def pump():
+        async for line in proc.stdout:
+            seen.append(line.decode(errors="replace").rstrip())
+            print("  bot |", seen[-1], flush=True)
+
+    async def studio(js):
+        async with async_playwright() as p:
+            b = await p.chromium.connect_over_cdp(bot.CDP)
+            page = next((pg for pg in b.contexts[0].pages if pg.url.endswith("/studio.html")), None)
+            if not page:
+                return None
+            if js.startswith("app:"):  # inside the live app
+                element = await page.query_selector("#frame")  # (over CDP the app's frame has no url to find it by)
+                frame = element and await element.content_frame()
+                return frame and await frame.evaluate(js[4:])
+            return await page.evaluate(js)
+
+    reader = asyncio.create_task(pump())
+    try:
+        start = time.monotonic()
+        while time.monotonic() - start < 420 and proc.returncode is None and sum("claude ->" in s for s in seen) < 2:
+            if not asked and any("claude <-" in s for s in seen):
+                asked = time.monotonic()
+            try:
+                state = await studio("studio.state()") or state
+                if asked and not first_app and state.get("preview"):
+                    first_app = time.monotonic() - asked
+            except Exception:
+                pass
+            await asyncio.sleep(1)
+        await asyncio.sleep(3)
+        before = await studio("app:document.body.innerText")
+        # Play it: click the first button the app shows, the page should change
+        played = await studio("""app:(() => { const b = [...document.querySelectorAll('button')].find(b => b.offsetParent);
+            if (!b) return 'no buttons'; const before = document.body.innerText; b.click();
+            return new Promise(r => setTimeout(() => r(document.body.innerText !== before ? 'reacted' : 'no change'), 800)) })()""")
+        buttons = await studio("app:[...document.querySelectorAll('button')].map(b => b.innerText.trim()).join(' | ')")
+    finally:
+        if proc.returncode is None:
+            proc.terminate()
+        await proc.wait()
+        reader.cancel()
+    replies = [s for s in seen if "claude ->" in s]
+    says = [s for s in seen if " says: " in s]
+    checks = [(bool(state.get("files")), f"code typed out on the Studio: {state.get('files')}"),
+              (first_app is not None and first_app < 60, f"playable on screen {first_app and round(first_app)}s after the request"),
+              (len(says) >= 2, f"it talked while building ({len(says)} lines): {[s.split('says: ')[1] for s in says[:4]]}"),
+              (bool(replies) and "?" in replies[0], "the first round ended with a question"),
+              (played == "reacted", f"the game works when played: {played!r} (buttons: {buttons})"),
+              (bool(re.search(r"new (round|game|hand)|deal again|play again|restart|reset", buttons or "", re.I)),
+               "the follow-up added a new-round button"),
+              (bool(before), "the live app is on the Studio at the end")]
+    for good, what in checks:
+        print(f"e2e: {'ok ' if good else 'NO '} {what}")
+    if not all(good for good, _ in checks):
+        sys.exit(1)
+    print("e2e OK")
+
+
 async def learn():
     """./jamie.sh e2e learn: Jamie teaches itself a shortcut, then uses it without the agent."""
     audio = "/tmp/jamie-test-learn.wav"
@@ -474,5 +542,5 @@ async def cancel():
 
 if __name__ == "__main__":
     env = os.environ.get("JAMIE_ENV", "default")
-    asyncio.run(room(env) if env in ROOMS else learn() if "learn" in sys.argv else vibe() if "vibe" in sys.argv
+    asyncio.run(room(env) if env in ROOMS else code_room() if env == "code" else learn() if "learn" in sys.argv else vibe() if "vibe" in sys.argv
                 else click_on_screen() if "open" in sys.argv else cancel() if "cancel" in sys.argv else main())

@@ -1,0 +1,139 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Studio</title>
+<!-- The code room's shared screen. studio.py drives it: studio.type(), studio.preview(), studio.reload() -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<style>
+  :root { --bg: #0d1117; --panel: #161b22; --line: #30363d; --dim: #7d8590; --text: #e6edf3; --accent: #3fb950; --live: #f85149 }
+  * { box-sizing: border-box }
+  body { margin: 0; height: 100vh; display: grid; grid-template-columns: 54% 46%; grid-template-rows: 1fr 34px;
+         background: var(--bg); color: var(--text); font: 15px/1.4 system-ui, sans-serif; overflow: hidden }
+  #code, #app { display: flex; flex-direction: column; min-height: 0 }
+  #app { border-left: 1px solid var(--line) }
+  .bar { height: 38px; flex: none; display: flex; align-items: center; gap: 2px; background: var(--panel);
+         border-bottom: 1px solid var(--line); padding: 0 8px; overflow: hidden; white-space: nowrap }
+  .tab { padding: 8px 14px; color: var(--dim); font: 13px ui-monospace, Menlo, monospace; border-radius: 6px 6px 0 0 }
+  .tab.on { color: var(--text); background: var(--bg); box-shadow: inset 0 2px 0 var(--accent) }
+  .tab.typing::after { content: " ●"; color: var(--accent) }
+  #editor { flex: 1; overflow: hidden; display: flex; font: 14px/1.5 ui-monospace, Menlo, monospace; position: relative }
+  #gutter { flex: none; padding: 12px 10px 12px 14px; color: #484f58; text-align: right; user-select: none; white-space: pre }
+  #src { flex: 1; margin: 0; padding: 12px 16px 12px 4px; white-space: pre; background: none !important; overflow: visible }
+  #cursor { display: inline-block; width: 2px; height: 1.2em; background: var(--accent); vertical-align: text-bottom;
+            margin-left: 1px; animation: blink 1s steps(1) infinite }
+  @keyframes blink { 50% { opacity: 0 } }
+  #empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--dim); font: 18px system-ui }
+  .label { font: 600 12px system-ui; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); margin-right: 10px }
+  #dot { width: 9px; height: 9px; border-radius: 50%; background: var(--dim); margin-right: 8px }
+  #dot.on { background: var(--live); box-shadow: 0 0 8px var(--live) }
+  #url { color: var(--dim); font: 13px ui-monospace, Menlo, monospace; overflow: hidden; text-overflow: ellipsis }
+  #frame { flex: 1; border: 0; background: #fff; display: none }
+  #wait { flex: 1; display: grid; place-items: center; color: var(--dim); font-size: 18px; text-align: center; padding: 24px }
+  #flash { position: absolute; right: 14px; top: 50px; background: var(--accent); color: #04130a; font: 600 13px system-ui;
+           padding: 5px 10px; border-radius: 6px; opacity: 0; transition: opacity .3s }
+  #flash.on { opacity: 1 }
+  #feed { grid-column: 1 / -1; display: flex; align-items: center; gap: 22px; padding: 0 14px; background: var(--panel);
+          border-top: 1px solid var(--line); color: var(--dim); font-size: 13px; overflow: hidden; white-space: nowrap }
+  #feed span:first-child { color: var(--text) }
+</style>
+<section id="code">
+  <div class="bar" id="tabs"><span class="label">Code</span></div>
+  <div id="editor"><div id="gutter"></div><pre id="src"></pre><div id="empty">Code appears here as it's written</div></div>
+</section>
+<section id="app" style="position: relative">
+  <div class="bar"><span id="dot"></span><span class="label">Live app</span><span id="url"></span></div>
+  <div id="wait">The app shows up here as soon as there's something to try</div>
+  <iframe id="frame" allow="autoplay; fullscreen"></iframe>
+  <div id="flash">Updated</div>
+</section>
+<div id="feed"><span>Studio ready</span></div>
+<script>
+const $ = id => document.getElementById(id);
+const LANG = { html: "xml", htm: "xml", js: "javascript", jsx: "javascript", ts: "typescript", tsx: "typescript",
+               css: "css", py: "python", json: "json", sh: "bash", md: "markdown" };
+const files = {};   // name -> full text
+let shown = null;   // the file on screen
+let job = null;     // the typing in progress: {name, text, at, end}
+let base = "";      // the app's url
+
+function tabs() {
+  const bar = $("tabs");
+  bar.querySelectorAll(".tab").forEach(t => t.remove());
+  for (const name of Object.keys(files)) {
+    const t = document.createElement("span");
+    t.className = "tab" + (name === shown ? " on" : "") + (job && job.name === name ? " typing" : "");
+    t.textContent = name;
+    bar.append(t);
+  }
+}
+
+function render(name, text, upto, end) {
+  // text[0:upto] typed so far, the cursor, then the unchanged rest (text[end:])
+  const ext = name.split(".").pop().toLowerCase(), lang = LANG[ext];
+  const hl = s => (window.hljs && lang && hljs.getLanguage(lang)) ? hljs.highlight(s, { language: lang }).value
+                                                                 : s.replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
+  $("src").innerHTML = hl(text.slice(0, upto)) + '<span id="cursor"></span>' + hl(text.slice(end));
+  const lines = (text.slice(0, upto) + text.slice(end)).split("\n").length;
+  $("gutter").textContent = Array.from({ length: lines }, (_, i) => i + 1).join("\n");
+  $("empty").style.display = "none";
+  // keep the cursor in the middle of the view
+  const ed = $("editor"), c = $("cursor");
+  const y = Math.max(0, c.offsetTop - ed.clientHeight / 2);
+  const x = Math.max(0, c.offsetLeft - ($("src").clientWidth || ed.clientWidth) * 0.75);  // long lines: follow it sideways
+  $("gutter").style.transform = `translateY(${-y}px)`;
+  $("src").style.transform = `translate(${-x}px, ${-y}px)`;
+}
+
+function finish() {
+  if (!job) return;
+  render(job.name, job.text, job.text.length, job.text.length);
+  job = null;
+  tabs();
+}
+
+function note(text) {
+  const s = document.createElement("span");
+  s.textContent = text;
+  $("feed").prepend(s);
+  while ($("feed").children.length > 5) $("feed").lastChild.remove();
+}
+
+window.studio = {
+  // Show name's new text, typing out what changed: keep text[0:pre] and the last suf characters as they were
+  type(name, text, pre = 0, suf = 0) {
+    finish();
+    const isNew = !(name in files);
+    files[name] = text;
+    shown = name;
+    const end = Math.max(pre, text.length - suf), n = end - pre;
+    // fast enough that the screen keeps up with the agent: at least 300 chars/s, never more than ~5s per change
+    job = { name, text, at: pre, end, from: pre, start: performance.now(), cps: Math.max(300, n / 5) };
+    note((isNew ? "Created " : "Saved ") + name);
+    tabs();
+    const step = now => {
+      if (!job || job.name !== name || job.text !== text) return;
+      job.at = Math.min(job.end, job.from + Math.floor((now - job.start) / 1000 * job.cps));
+      render(name, text, job.at, job.end);
+      if (job.at < job.end) requestAnimationFrame(t => setTimeout(() => step(t), 33));  // ~30fps: enough for typing
+      else finish();
+    };
+    step(performance.now());
+  },
+  preview(url) {
+    base = url;
+    $("url").textContent = url;
+    $("wait").style.display = "none";
+    $("frame").style.display = "block";
+    $("dot").className = "on";
+    $("frame").src = url;
+    note("Live app: " + url);
+  },
+  reload() {
+    if (!base) return;
+    $("frame").src = base + (base.includes("?") ? "&" : "?") + "v=" + Date.now();  // past any cache
+    $("flash").className = "on";
+    setTimeout(() => $("flash").className = "", 1200);
+  },
+  state: () => ({ files: Object.keys(files), typing: !!job, preview: base }),
+};
+</script>
