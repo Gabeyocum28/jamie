@@ -1,0 +1,6 @@
+{
+  "next-question":   { "description": "next question, let's keep going, next round", "keys": ["ArrowRight"] },
+  "prev-question":   { "description": "go back to the previous question", "keys": ["ArrowLeft"] },
+  "reveal-answer":   { "description": "reveal the answer, what was the answer, show the answer", "keys": ["Enter"] },
+  "start-countdown": { "description": "start the countdown, start the clock, restart the countdown", "keys": ["c"] }
+}

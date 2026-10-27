@@ -4,7 +4,14 @@ An environment is a folder here that turns Jamie into a specialist: what it focu
 software it has, which extra tools it can call. Pick one in the Chrome extension (or
 `--env NAME`) when you send a Jamie. Every folder with a `ROOM.md` shows up in the dropdown.
 
-`math/` is a complete example. Copy it to start a new room.
+`math/` is a complete example. Copy it to start a new room. The other rooms:
+
+- `default/`: general purpose
+- `study/`: tutoring and homework help; `quiz.py` puts flashcards on screen
+- `work/`: runs meetings; `agenda.py` shows the agenda, a timer, decisions and action items
+- `fun/`: hangouts and party games; `trivia.py` is a game-show screen with a scoreboard
+
+`python3 environments/test_rooms.py` checks the study, work and fun tools and their controls.
 
 ## What every room gets for free
 

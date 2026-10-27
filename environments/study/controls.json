@@ -1,0 +1,7 @@
+{
+  "next-card":   { "description": "next card, next question, go on to the next flashcard", "keys": ["ArrowRight"] },
+  "prev-card":   { "description": "previous card, go back a card", "keys": ["ArrowLeft"] },
+  "show-answer": { "description": "show the answer, flip the card, what's the answer", "keys": ["Enter"] },
+  "got-it":      { "description": "I got it right, mark this card correct", "keys": ["y"] },
+  "missed-it":   { "description": "I got it wrong, I missed that one, mark this card wrong", "keys": ["n"] }
+}
