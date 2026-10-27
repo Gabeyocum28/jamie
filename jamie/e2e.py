@@ -118,6 +118,14 @@ async def video_controls():
             ok = bool(stage) and await stage[0].evaluate(check)
         results[action] = ok
         print(f"e2e: {'ok ' if ok else 'NO '} --video {action} in {time.monotonic() - start:.1f}s: {out}", flush=True)
+    # "A different video": the same search twice never shows the same video again
+    urls = []
+    for _ in range(2):
+        proc = await asyncio.create_subprocess_exec("python3", os.path.join(HERE, "bot.py"), "--play", "funny cats",
+                                                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+        urls.append(((await proc.communicate())[0].decode().strip().split() or [""])[-1])
+    results["different"] = "watch?v=" in urls[0] and "watch?v=" in urls[1] and urls[0] != urls[1]
+    print(f"e2e: {'ok ' if results['different'] else 'NO '} --play twice gave different videos: {urls}", flush=True)
     return all(results.values())
 
 

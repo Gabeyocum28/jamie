@@ -21,7 +21,7 @@ import sys
 import time
 
 from difflib import SequenceMatcher
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 from playwright.async_api import async_playwright, TimeoutError as PWTimeout
 
@@ -59,7 +59,10 @@ def core_prompt(cwd):
         "`python3 /app/bot.py --show <url>`: it opens the url in a 'stage' tab and screen-shares it with "
         "sound (run it again to switch, `--show off` to stop). For YouTube, `python3 /app/bot.py --play "
         "'<what to search>'` finds the top video, shares it and makes it fullscreen in one step; ads are "
-        "skipped automatically while it plays. Both only return once Meet "
+        "skipped automatically while it plays. It never repeats a video already shown in this call, so for "
+        "'a different video' run it once with the same topic. Every --play is live on screen: don't try several "
+        "to find a good one; if you need to choose, look at YouTube in your own tab first, then --show the "
+        "watch URL. Both only return once Meet "
         "confirms the share, so don't check it again afterwards. To control the video being shared, run "
         "`python3 /app/bot.py --video play|pause|fullscreen|exit-fullscreen|skip-ad|mute|unmute`: one step, "
         "much faster than clicking through the page. People are waiting in a live call: use "
@@ -363,15 +366,30 @@ async def skip_ads(page):
                 log("Skipped an ad.")
 
 
+PLAYED = "/tmp/jamie-played"  # videos shown this call (one container per call), so "a different one" never repeats
+
+
+def video_id(href):
+    return parse_qs(urlsplit(href).query).get("v", [""])[0]
+
+
 async def play(page, query):
-    """Share YouTube's search results, then open the top video in the same (shared) tab.
-    Returns (title, url)."""
+    """Share YouTube's search results, then open the top video not yet shown this call, in the same
+    (shared) tab. Returns (title, url)."""
+    try:
+        played = set(open(PLAYED).read().split())
+    except FileNotFoundError:
+        played = set()
     stage = await show(page, "https://www.youtube.com/results?" + urlencode({"search_query": query}))
-    link = stage.locator("a#video-title[href^='/watch']").first
-    await link.wait_for(timeout=15_000)
-    title = (await link.inner_text()).strip()
-    await link.click()  # YouTube swaps in the video without reloading; the share follows the tab
+    links = stage.locator("a#video-title[href^='/watch']")
+    await links.first.wait_for(timeout=15_000)
+    hrefs = await links.evaluate_all("els => els.map(e => e.getAttribute('href'))")
+    i = next((i for i, h in enumerate(hrefs) if video_id(h) not in played), 0)
+    title = (await links.nth(i).inner_text()).strip()
+    await links.nth(i).click()  # YouTube swaps in the video without reloading; the share follows the tab
     await stage.wait_for_url(re.compile(r"youtube\.com/watch"), timeout=15_000)
+    with open(PLAYED, "a") as f:
+        f.write(video_id(stage.url) + "\n")
     await youtube_hd(stage)
     await fullscreen(stage)  # what people want when they ask for a video; ads get skipped by the main loop
     return title, stage.url.split("&")[0]
