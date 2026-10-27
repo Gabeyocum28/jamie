@@ -150,12 +150,30 @@ def create(req, img, google):
     return info(json.loads(docker("inspect", name))[0])
 
 
+def status(log_lines):
+    """What a Jamie is doing, from its log: the last milestone wins."""
+    state = "starting"
+    for line in log_lines:
+        if "Opening https://meet.google.com" in line:
+            state = "joining"
+        elif "Waiting to be admitted" in line:
+            state = "waiting to be admitted"
+        elif "Listening for" in line or " -> " in line or "control:" in line:
+            state = "listening"
+        elif " <- " in line:
+            state = "working on a request"
+        elif "Call ended or Jamie was removed" in line or "Saved the meeting" in line:
+            state = "left the call"
+    return state
+
+
 def info(c):
     labels = c["Config"]["Labels"]
     port = {int(k.split("/")[0]): v[0]["HostPort"] for k, v in (c["NetworkSettings"]["Ports"] or {}).items() if v}
     return {
         "id": c["Name"].lstrip("/"),
         "state": c["State"]["Status"],
+        "status": status(docker("logs", "--tail", "200", c["Name"].lstrip("/")).splitlines()),
         **{k: labels.get(f"jamie.{k}") for k in ("meet_url", "env", "personality", "agent", "google")},
         "screen": f"http://{HOST}:{port[6080]}/vnc.html" if 6080 in port else None,
         "apps": {p: f"http://{HOST}:{port[p]}" for p in PORTS[1:] if p in port},
