@@ -1,0 +1,26 @@
+"""Self-check for request validation: JAMIE_ROOT=.. python3 test_server.py (or ./jamie.sh test)"""
+import json
+
+import server
+
+
+def rejects(body, why):
+    try:
+        server.parse(json.dumps(body))
+    except ValueError as e:
+        assert why in str(e), e
+        return
+    raise AssertionError(f"accepted {body}")
+
+
+ok = server.parse(json.dumps({"meet_url": "https://meet.google.com/abc-defg-hij?authuser=1", "personality": "hype"}))
+assert ok == {"meet_url": "https://meet.google.com/abc-defg-hij", "env": "default",
+              "personality": "hype", "agent": "claude"}, ok
+assert server.parse(json.dumps({"meet_url": "https://meet.google.com/meet/siy-jvzm-ryq"}))["meet_url"] == \
+    "https://meet.google.com/siy-jvzm-ryq"
+rejects({"meet_url": "https://evil.com/abc-defg-hij"}, "meet_url")
+rejects({"meet_url": "https://meet.google.com/abc-defg-hij/../x"}, "meet_url")
+rejects({"meet_url": "https://meet.google.com/abc-defg-hij", "env": "../../etc"}, "unknown env")
+rejects({"meet_url": "https://meet.google.com/abc-defg-hij", "agent": "gpt"}, "unknown agent")
+rejects({"env": "default"}, "expected JSON")
+print("controller OK")

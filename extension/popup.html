@@ -1,0 +1,42 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Jamie</title>
+<style>
+  :root { color-scheme: light dark; font: 13px system-ui, sans-serif; }
+  body { width: 320px; margin: 12px; }
+  h1 { font-size: 15px; margin: 0 0 10px; }
+  label { display: block; margin: 8px 0 2px; font-weight: 600; }
+  input, select, button { width: 100%; box-sizing: border-box; padding: 5px; font: inherit; }
+  button { margin-top: 10px; cursor: pointer; }
+  details { margin-top: 12px; }
+  #status { margin-top: 8px; min-height: 1em; }
+  .err { color: #d33; }
+  ul { padding: 0; list-style: none; }
+  li { border-top: 1px solid #8884; padding: 6px 0; }
+  li.here { font-weight: 600; }
+  li button { width: auto; margin: 4px 0 0 8px; padding: 2px 8px; }
+</style>
+<h1>Jamie</h1>
+<form id="form">
+  <label for="meet">Meeting link</label>
+  <input id="meet" required placeholder="https://meet.google.com/abc-defg-hij">
+  <label for="env">Environment</label>
+  <select id="env" disabled><option>Connect in Settings first</option></select>
+  <label for="personality">Personality</label>
+  <select id="personality" disabled><option>Connect in Settings first</option></select>
+  <label for="agent">Agent</label>
+  <select id="agent" disabled><option>Connect in Settings first</option></select>
+  <button id="start" disabled>Send Jamie</button>
+</form>
+<div id="status" role="status"></div>
+<h1 style="margin-top:12px">Running</h1>
+<ul id="jamies"></ul>
+<details id="settings">
+  <summary>Settings</summary>
+  <label for="url">Controller URL</label>
+  <input id="url">
+  <label for="token">Token (JAMIE_CONTROLLER_TOKEN in .env)</label>
+  <input id="token" type="password">
+  <button id="save" type="button">Save</button>
+</details>
+<script type="module" src="popup.js"></script>
