@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Virtual display + window manager + VNC + browser-based viewer (noVNC), then the given command
 set -e
+umask 002  # files Jamie writes in a project stay editable by its owner (the controller shares its group)
 export DISPLAY=:99
 Xvfb :99 -screen 0 1280x800x24 -nolisten tcp >/dev/null 2>&1 &
 sleep 1

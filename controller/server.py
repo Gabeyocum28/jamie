@@ -5,17 +5,26 @@ a copy of the agent logins, so instances never share an agent session. For Googl
 borrows a free signed-in profile (a jamie-google-<name> volume) and uses it directly, not a copy:
 Google ends sessions whose cookies get replayed from stale copies.
 
-  GET    /options        environments, personalities, agents (for the extension's dropdowns)
+  GET    /options        environments, personalities, agents, projects (for the extension's dropdowns)
   GET    /jamies         running Jamies with their screen and app links
-  POST   /jamies         {"meet_url", "env", "personality", "agent"} -> starts one
+  POST   /jamies         {"meet_url", "env", "personality", "agent", "project"} -> starts one
   DELETE /jamies/<id>    stops it (it drops out of the call)
+  POST   /projects       {"repo", "token"} -> clones a git repo into the projects folder
+                         {"folder"} -> links a folder where it is (Jamie works on the original)
+
+Projects are your own folders: every folder in the projects folder (~/jamie-projects, mounted at
+/projects), plus any listed in JAMIE_PROJECTS (.env, mounted at /linked/<name>). A Jamie started with
+one gets that same folder, live, at /workspace/project.
 
 Every request needs "Authorization: Bearer $JAMIE_CONTROLLER_TOKEN".
 """
+import base64
 import json
 import os
 import re
 import secrets
+import shutil
+import socket
 import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -23,6 +32,14 @@ from urllib.parse import urlsplit
 
 ROOT = os.environ.get("JAMIE_ROOT", "/jamie")        # this repo: Dockerfile, jamie/, environments/, personalities/
 LOGINS = os.environ.get("JAMIE_LOGINS", "/logins")   # login volumes, copied into every new Jamie
+PROJECTS = os.environ.get("JAMIE_PROJECTS_DIR", "/projects")  # the projects folder: each folder in it is a project
+LINKED = os.environ.get("JAMIE_LINKED_DIR", "/linked")        # JAMIE_PROJECTS folders from elsewhere, one mount each
+PROJECTS_SHOWN = os.environ.get("JAMIE_PROJECTS_SHOWN", "")   # where people find the projects folder on their computer
+# From ./jamie.sh, which runs on the computer itself: its OS (mac | linux | wsl), the user folders people may
+# link folders from (the Linux/Mac home; on WSL also the Windows one), and where WSL mounts Windows drives
+HOST_OS = os.environ.get("JAMIE_HOST_OS", "linux")
+HOMES = [h for h in os.environ.get("JAMIE_HOST_HOMES", "").split(":") if h.startswith("/")]
+WSL_DRIVES = os.environ.get("JAMIE_WSL_DRIVES") or "/mnt"
 TOKEN = os.environ.get("JAMIE_CONTROLLER_TOKEN", "")
 # shortcut: ports listen on the host's localhost; on the homelab set JAMIE_BIND/JAMIE_HOST to its Tailscale IP
 BIND = os.environ.get("JAMIE_BIND", "127.0.0.1")
@@ -49,7 +66,156 @@ def options():
         "environments": sorted(d for d in os.listdir(envs) if os.path.isfile(f"{envs}/{d}/ROOM.md")),
         "personalities": sorted(f[:-3] for f in os.listdir(f"{ROOT}/personalities") if f.endswith(".md")),
         "agents": list(AGENTS),
+        "projects": project_names(),
+        "projects_home": PROJECTS_SHOWN,
+        "host_os": HOST_OS,  # the popup's path example and tip
     }
+
+
+def projects():
+    """Project name -> its folder here: the projects folder's folders, plus the JAMIE_PROJECTS links."""
+    found = {}
+    for base in (PROJECTS, LINKED):
+        if os.path.isdir(base):
+            found.update({d: f"{base}/{d}" for d in os.listdir(base)
+                          if not d.startswith(".") and os.path.isdir(f"{base}/{d}")})
+    return found
+
+
+def links():
+    """Folders linked from the extension, where they are: name -> path on the host (not mounted here)."""
+    try:
+        with open(f"{PROJECTS}/.jamie-links.json") as f:
+            return json.load(f)
+    except (FileNotFoundError, ValueError):
+        return {}
+
+
+def project_names():
+    return sorted({**links(), **projects()})
+
+
+EXAMPLE = {"mac": "/Users/you/Documents/sales", "linux": "/home/you/sales",
+           "wsl": "C:\\Users\\you\\Documents\\sales"}.get(HOST_OS, "/home/you/sales")
+
+
+def home_of(path):
+    """The user folder (from JAMIE_HOST_HOMES) this path is inside, or None. The user folder itself doesn't count."""
+    return next((h for h in HOMES if path.startswith(h.rstrip("/") + "/")), None)
+
+
+def host_folder(folder):
+    """A folder as people paste it -> its path for Docker. On WSL, C:\\Users\\you\\sales and \\\\wsl.localhost\\
+    Ubuntu\\home\\you\\sales become WSL paths. Only folders inside the user's own user folder(s): never a whole
+    drive, a whole home, a system folder or someone else's home."""
+    p = folder.strip().strip('"').strip("'")  # Explorer's "Copy as path" adds quotes
+    if HOST_OS == "wsl" and (m := re.fullmatch(r"([A-Za-z]):[\\/](.*)", p)):
+        p = f"{WSL_DRIVES.rstrip('/')}/{m[1].lower()}/" + m[2].replace("\\", "/")
+    elif HOST_OS == "wsl" and (m := re.fullmatch(r"\\\\wsl(?:\.localhost|\$)\\[^\\]+\\(.*)", p, re.I)):
+        p = "/" + m[1].replace("\\", "/")
+    elif p.startswith("~/"):
+        p = HOMES[0] + p[1:] if HOMES else p
+    p = os.path.normpath(p) if p.startswith("/") else ""
+    if not home_of(p):
+        raise ValueError(f"Paste the full path of a folder inside your user folder, like {EXAMPLE}")
+    return p
+
+
+def exists(host):
+    """Is there a folder at this host path? Asked through its user folder, which exists: Docker Desktop creates
+    a missing folder you mount, so the folder itself can't be mounted to check."""
+    home = home_of(host)
+    try:
+        docker("run", "--rm", "--mount", f'type=bind,"source={home}",target=/x,readonly', "--entrypoint", "test",
+               "jamie-controller", "-d", "/x/" + host[len(home):].lstrip("/"))
+        return True
+    except RuntimeError:
+        return False
+
+
+def link_folder(raw):
+    """Link a folder where it is: Jamie works on the original, live. The link is kept across restarts."""
+    try:
+        host = host_folder(raw["folder"])
+    except (KeyError, TypeError, AttributeError):
+        raise ValueError('expected JSON {"folder": "<full path of a folder>"}')
+    linked = links()
+    for name, path in linked.items():
+        if path == host:  # linked already
+            return {"project": name, "projects": project_names()}
+    if not exists(host):
+        raise ValueError(f"Can't find the folder {raw['folder'].strip()}")
+    base = re.sub(r"[^A-Za-z0-9_-]+", "-", os.path.basename(host)).strip("-")[:40] or "folder"
+    name, n = base, 2
+    while name in project_names():
+        name, n = f"{base}-{n}", n + 1
+    linked[name] = host
+    with open(f"{PROJECTS}/.jamie-links.json", "w") as f:
+        json.dump(linked, f, indent=2)
+    return {"project": name, "projects": project_names()}
+
+
+def repo_url(repo):
+    """github.com/owner/repo, owner/repo or any https git URL -> (clean https URL, project name)."""
+    repo = repo.strip()
+    if re.fullmatch(r"[\w.-]+/[\w.-]+", repo):
+        repo = f"https://github.com/{repo}"
+    elif "://" not in repo:
+        repo = f"https://{repo}"
+    u = urlsplit(repo)
+    path = u.path.rstrip("/").removesuffix(".git")
+    name = re.sub(r"[^A-Za-z0-9_-]+", "-", path.split("/")[-1]).strip("-")[:40]
+    if u.scheme != "https" or not u.hostname or u.username or u.password or "/" not in path.strip("/") or not name:
+        raise ValueError("repo must look like github.com/owner/repo")
+    return f"https://{u.netloc}{path}", name
+
+
+def add_repo(raw):
+    """Clone a repo into the projects folder. The token (for private repos) is used for this clone only:
+    it isn't saved in the repo, and Jamie never sees it."""
+    try:
+        url, name = repo_url(raw["repo"])
+        token = raw.get("token") or ""
+        assert isinstance(token, str)
+    except (KeyError, TypeError, AttributeError, AssertionError):
+        raise ValueError('expected JSON {"repo": "github.com/owner/repo", "token": optional}')
+    if not os.path.isdir(PROJECTS):
+        raise LookupError("No projects folder. Restart ./jamie.sh controller")
+    if name in project_names():
+        raise ValueError(f"There's already a project called {name}")
+    auth = ["-c", "http.extraHeader=Authorization: Basic "
+            + base64.b64encode(f"x-access-token:{token}".encode()).decode()] if token else []
+    dest = f"{PROJECTS}/{name}"
+    try:
+        r = subprocess.run(["git", *auth, "clone", "--", url, dest], capture_output=True, text=True, timeout=600,
+                           env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})  # fail instead of asking for a password
+    except subprocess.TimeoutExpired:
+        r = None
+    if not r or r.returncode:
+        shutil.rmtree(dest, ignore_errors=True)
+        why = "it took over 10 minutes" if not r else r.stderr.strip().splitlines()[-1][:200]
+        hint = "" if token else " Private repo? Add a GitHub token in Settings."
+        raise ValueError(f"Couldn't clone {url}: {why}.{hint}")
+    owner = os.stat(PROJECTS)  # cloned as root here: hand it to whoever owns the projects folder
+    subprocess.run(["chown", "-R", f"{owner.st_uid}:{owner.st_gid}", dest], capture_output=True)
+    return {"project": name, "projects": project_names()}
+
+
+def share(host):
+    """Jamie runs as another user (pwuser), so make the project group-writable, with new files taking the
+    folder's group: Jamie can edit it, and what Jamie writes stays editable by its owner. Returns that group.
+    Done in a helper container, since linked folders aren't mounted here. Not on a Mac: Docker Desktop lets
+    containers write there anyway, and every Mac account shares the group (staff)."""
+    if host in links().values() and not exists(host):  # mounting it would create an empty one
+        raise LookupError(f"The project folder {host} is gone. Was it moved or renamed?")
+    if HOST_OS == "mac":
+        return None
+    try:
+        return docker("run", "--rm", "--mount", f'type=bind,"source={host}",target=/x', "--entrypoint", "sh",
+                      "jamie-controller", "-c",  # (a Windows drive may refuse the chmod: it's open to everyone anyway)
+                      "chmod -R g+rwX /x 2>/dev/null; find /x -type d -exec chmod g+s {} + 2>/dev/null; stat -c %g /x")
+    except RuntimeError:
+        raise LookupError(f"The project folder {host} is gone. Was it moved or renamed?")
 
 
 def parse(body):
@@ -62,6 +228,7 @@ def parse(body):
                (("env", "default"), ("personality", "default"), ("agent", "claude"))}
         look = raw.get("look") or {}
         voice = raw.get("voice", True)
+        project = raw.get("project") or ""
     except (ValueError, KeyError, TypeError, AttributeError):
         raise ValueError('expected JSON {"meet_url": ..., "env": ..., "personality": ..., "agent": ...}')
     code = re.fullmatch(r"(?:/meet)?/([a-z]{3}-[a-z]{4}-[a-z]{3})", u.path)  # some Meet tabs show /meet/<code>
@@ -79,6 +246,9 @@ def parse(body):
     if not isinstance(voice, bool):
         raise ValueError("voice must be true or false")
     req["voice"] = voice
+    if project and project not in opts["projects"]:  # only folders the owner listed in JAMIE_PROJECTS
+        raise ValueError(f"unknown project {project!r}. Available: {', '.join(opts['projects']) or 'none (set JAMIE_PROJECTS)'}")
+    req["project"] = project
     req["meet_url"] = f"https://meet.google.com/{code[1]}"
     return req
 
@@ -119,6 +289,18 @@ def prune(keep=5):
         docker("rm", *old)
 
 
+def project_source(path):
+    """The host folder behind a project folder here, as the Docker daemon names it (from this controller's
+    own mounts). Reusing the daemon's own path works the same on Linux, Mac and Docker Desktop with WSL."""
+    mounts = {m["Destination"]: m["Source"] for m in json.loads(docker("inspect", socket.gethostname()))[0]["Mounts"]}
+    base, name = os.path.split(path)
+    if path in mounts:  # a JAMIE_PROJECTS link
+        return mounts[path]
+    if base in mounts:  # a folder in the projects folder
+        return f"{mounts[base]}/{name}"
+    raise LookupError(f"{path} isn't mounted. Restart ./jamie.sh controller")
+
+
 def create(req, img, google):
     env = req["env"]
     name = f"jamie-{env}-{secrets.token_hex(3)}"
@@ -129,8 +311,13 @@ def create(req, img, google):
         flags += ["--env-file", f"{ROOT}/environments/{env}/.env"]
     for p in PORTS:
         flags += ["-p", f"{BIND}::{p}"]  # Docker picks a free host port, so many Jamies can run at once
-    for k in ("meet_url", "env", "personality", "agent"):
-        flags += ["--label", f"jamie.{k}={req[k]}"]
+    if req.get("project"):  # their real files, live: what Jamie changes there stays changed
+        here = projects().get(req["project"])
+        host = project_source(here) if here else links()[req["project"]]
+        gid = share(host)
+        flags += ["-v", f"{host}:/workspace/project", *(["--group-add", gid] if gid else [])]
+    for k in ("meet_url", "env", "personality", "agent", "project"):
+        flags += ["--label", f"jamie.{k}={req.get(k, '')}"]
     # shortcut: the workspace lives in the container and is deleted when Jamie leaves; add a volume per instance to keep work
     docker("create", "--init", "--shm-size", "2g", "--name", name, "--label", "jamie=1",
            "-e", f"JAMIE_ENV={env}", "-e", f"JAMIE_LOOK={json.dumps(req['look'])}",
@@ -190,7 +377,7 @@ def info(c):
         "state": c["State"]["Status"],
         **(lambda lines: {"status": status(lines), "heard": last(lines, " heard "),
                           "said": last(lines, " -> ")})(logs(c["Name"].lstrip("/"))),
-        **{k: labels.get(f"jamie.{k}") for k in ("meet_url", "env", "personality", "agent", "google")},
+        **{k: labels.get(f"jamie.{k}") for k in ("meet_url", "env", "personality", "agent", "project", "google")},
         "screen": f"http://{HOST}:{port[6080]}/vnc.html" if 6080 in port else None,
         "apps": {p: f"http://{HOST}:{port[p]}" for p in PORTS[1:] if p in port},
     }
@@ -235,11 +422,14 @@ class Handler(BaseHTTPRequestHandler):
                 return self.reply(200, options())
             if self.command == "GET" and path == "/jamies":
                 return self.reply(200, jamies())
-            if self.command == "POST" and path == "/jamies":
+            if self.command == "POST" and path in ("/jamies", "/projects"):
                 length = int(self.headers.get("Content-Length") or 0)
                 if not 0 <= length <= 65536:
                     raise ValueError("bad Content-Length")
                 body = self.rfile.read(length)
+                if path == "/projects":
+                    raw = json.loads(body)
+                    return self.reply(201, link_folder(raw) if isinstance(raw, dict) and "folder" in raw else add_repo(raw))
                 return self.reply(201, start(parse(body)))
             if self.command == "DELETE" and path.startswith("/jamies/"):
                 stop(path.split("/", 2)[2])

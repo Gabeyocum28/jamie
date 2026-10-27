@@ -63,6 +63,12 @@
   li.empty { color: var(--muted); font-size: 12px; padding: 0; }
   #save { margin-top: 10px; }
   code { font-family: ui-monospace, Menlo, monospace; font-size: 11px; }
+  #addbox summary { padding: 8px 0 0; font-size: 12px; font-weight: 400; color: var(--muted); }
+  #addbox label { margin-top: 8px; }
+  .add { display: flex; gap: 6px; }
+  .add button { flex: none; }
+  .hint { margin: 8px 0 0; font-size: 12px; color: var(--muted); }
+  .hint code { word-break: break-all; user-select: all; }
 </style>
 <header>
   <h1>Jamie</h1>
@@ -76,8 +82,25 @@
       <div><label for="env">Environment</label><select id="env" disabled><option>Connect first</option></select></div>
       <div><label for="personality">Personality</label><select id="personality" disabled><option>Connect first</option></select></div>
     </div>
-    <label for="agent">Agent</label>
-    <select id="agent" disabled><option>Connect first</option></select>
+    <div class="grid">
+      <div><label for="agent">Agent</label><select id="agent" disabled><option>Connect first</option></select></div>
+      <div><label for="project">Project</label><select id="project" disabled><option>Connect first</option></select></div>
+    </div>
+    <details id="addbox">
+      <summary>Add a project</summary>
+      <label for="folder">A folder on this computer <span class="sub">(Jamie works on the original)</span></label>
+      <div class="add">
+        <input id="folder" placeholder="/home/you/sales" spellcheck="false">
+        <button id="addfolder" type="button" disabled>Link</button>
+      </div>
+      <label for="repo">From GitHub <span class="sub">(cloned to the projects folder)</span></label>
+      <div class="add">
+        <input id="repo" placeholder="github.com/owner/repo" spellcheck="false">
+        <button id="addrepo" type="button" disabled>Clone</button>
+      </div>
+      <p class="hint"><span id="tip">Paste the folder's full path.</span> Folders you put in
+        <code id="home">the projects folder</code> show up too.</p>
+    </details>
     <div class="row">
       <div><b id="voice-label">Voice</b><small id="voice-hint">Jamie talks in the call</small></div>
       <label class="switch"><input id="voice" type="checkbox" role="switch" checked aria-labelledby="voice-label" aria-describedby="voice-hint"><span></span></label>
@@ -104,6 +127,8 @@
     <input id="url" spellcheck="false">
     <label for="token">Token <span class="sub">(<code>JAMIE_CONTROLLER_TOKEN</code> in .env)</span></label>
     <input id="token" type="password">
+    <label for="github">GitHub token <span class="sub">(only for cloning private repos)</span></label>
+    <input id="github" type="password" placeholder="github_pat_…">
     <button id="save" type="button">Save</button>
   </div>
 </details>

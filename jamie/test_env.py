@@ -55,6 +55,14 @@ def main():
         a.has_session = True
         assert {"claude": "--continue", "codex": "resume", "gemini": "--resume"}[agent] in a.command("x")
 
+    assert "The team's project" not in read(f"{ws}/CLAUDE.md")  # no project picked
+    os.makedirs(f"{ws}/project")
+    bot.prepare("lab", "pirate", "claude")
+    assert "The team's project" not in read(f"{ws}/CLAUDE.md")  # an empty mount point isn't a project
+    write(f"{ws}/project/sales.csv", "region,revenue")
+    bot.prepare("lab", "pirate", "claude")
+    assert os.path.join(ws, "project") in read(f"{ws}/CLAUDE.md") and "never edit or delete" in read(f"{ws}/CLAUDE.md")
+
     assert read(f"{ws}/app.py") == "built by Jamie"    # Jamie's work kept
     assert os.path.exists(f"{ws}/setup-ran")
     assert not os.path.exists(f"{ws}/.env") and not os.path.exists(f"{ws}/Dockerfile")  # secrets stay out

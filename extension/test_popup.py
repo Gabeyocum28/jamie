@@ -23,7 +23,8 @@ EXT_ID = "".join(chr(ord("a") + int(c, 16)) for c in hashlib.sha256(EXT.encode()
 TOKEN = "test-token-1234567890"
 OPTIONS = {"environments": ["default", "fun", "math", "study", "work"],
            "personalities": ["chill", "concise", "default", "hype", "pirate", "tutor"],
-           "agents": ["claude", "codex", "gemini"]}
+           "agents": ["claude", "codex", "gemini"], "projects": ["sales-data"],
+           "projects_home": "/Users/you/jamie-projects", "host_os": "mac"}
 MEET = "https://meet.google.com/abc-defg-hij"
 
 
@@ -39,7 +40,7 @@ def main():
     os.makedirs(SHOTS, exist_ok=True)
     running = [jamie("jamie-fun-a1b2c3", "abc-defg-hij", "fun", "hype", "claude"),
                jamie("jamie-math-d4e5f6", "xyz-wxyz-xyz", "math", "tutor", "codex")]
-    posts, deletes, fail = [], [], {"post": None}
+    posts, deletes, clones, fail = [], [], [], {"post": None}
 
     def controller(route):
         req = route.request
@@ -61,6 +62,10 @@ def main():
             if fail["post"]:
                 return reply(404, {"error": fail["post"]})
             return reply(201, jamie("jamie-new-000000", body["meet_url"].split("/")[-1], body["env"], body["personality"], body["agent"]))
+        if req.method == "POST" and path == "/projects":
+            clones.append(json.loads(req.post_data))
+            name = "q3-sales" if "folder" in clones[-1] else "churn-report"
+            return reply(201, {"project": name, "projects": sorted({name, "sales-data"})})
         if req.method == "DELETE" and path.startswith("/jamies/"):
             deletes.append(path.split("/")[-1])
             running[:] = [j for j in running if j["id"] != deletes[-1]]
@@ -130,9 +135,11 @@ def main():
         page.select_option("#env", "math")
         page.select_option("#personality", "pirate")
         page.select_option("#agent", "codex")
+        assert page.locator("#project option").all_inner_texts() == ["None", "Sales data"]
+        page.select_option("#project", "sales-data")
         page.click("#start")
         expect(page.locator("#status")).to_contain_text("is joining")
-        assert posts[-1] == {"meet_url": MEET, "env": "math", "personality": "pirate", "agent": "codex",
+        assert posts[-1] == {"meet_url": MEET, "env": "math", "personality": "pirate", "agent": "codex", "project": "sales-data",
                              "look": {"eyes": "disc", "mouth": "smile", "color": "sunset", "motion": "float",
                                       "accessory": "party-hat"}, "voice": False}, posts[-1]
         page.click(".switch")
@@ -160,6 +167,25 @@ def main():
         page.locator("#jamies li", has_text="Math · Tutor · Codex").locator("button").click()
         expect(page.locator("#jamies li .links")).to_have_count(1)
         assert deletes == ["jamie-math-d4e5f6"]
+
+        # Add from GitHub: Enter clones (it doesn't send Jamie), and the new project gets picked
+        page.click("#addbox summary")
+        assert "jamie-projects" in page.locator("#home").inner_text()
+        page.fill("#repo", "acme/churn-report")
+        page.screenshot(path=f"{SHOTS}/5-add-project.png", full_page=True)
+        page.press("#repo", "Enter")
+        expect(page.locator("#project")).to_have_value("churn-report")
+        expect(page.locator("#status")).to_contain_text("Added churn-report")
+        assert clones == [{"repo": "acme/churn-report", "token": ""}] and len(posts) == 2, (clones, posts)
+
+        # Link a folder where it is, with the example path and tip for the controller's OS
+        page.click("#addbox summary")
+        assert page.locator("#folder").get_attribute("placeholder") == "/Users/you/Documents/sales"
+        assert "Finder" in page.locator("#tip").inner_text()
+        page.fill("#folder", "/Users/you/Documents/q3-sales")
+        page.click("#addfolder")
+        expect(page.locator("#project")).to_have_value("q3-sales")
+        assert clones[-1] == {"folder": "/Users/you/Documents/q3-sales"} and len(posts) == 2, clones
 
         # A controller error shows in the status line
         fail["post"] = "No free Google account. Sign one in: ./jamie.sh google-login <name>"

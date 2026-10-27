@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Builds the chosen environment's image on demand and runs Jamie in a fresh container for it.
 #
-#   ./jamie.sh join <meet-url> [--env NAME] [--personality NAME] [--agent claude|codex|gemini]
+#   ./jamie.sh join <meet-url> [--env NAME] [--personality NAME] [--agent claude|codex|gemini] [--project PATH]
 #   ./jamie.sh google-login [NAME]      sign a Google account in for Jamie (watch at localhost:6080)
 #   ./jamie.sh agent-login <agent>      sign an agent CLI in with your subscription
 #   ./jamie.sh debug <meet-url> [...]   join + dump Meet's DOM to workspace/<env>/meet-dump.html
@@ -61,7 +61,17 @@ run() {  # run [docker flags...] -- <command...>
 
 cmd=$1; shift || true
 case "$cmd" in
-  join)  run -- python3 /app/bot.py "$@" ;;
+  join)
+    bot=() flags=()
+    while [ $# -gt 0 ]; do  # --project PATH: mount that folder, live, at /workspace/project
+      if [ "$1" = --project ]; then
+        [ -d "${2:-}" ] || { echo "--project needs an existing folder"; exit 1; }
+        # Jamie runs as another user: share the folder's group with it, as the controller does
+        chmod -R g+rwX "$2" 2>/dev/null || true; find "$2" -type d -exec chmod g+s {} + 2>/dev/null || true
+        flags+=(-v "$(cd "$2" && pwd):/workspace/project" --group-add "$(ls -nd "$2" | awk '{print $4}')"); shift 2
+      else bot+=("$1"); shift; fi
+    done
+    run "${flags[@]}" -- python3 /app/bot.py "${bot[@]}" ;;
   debug) run -e JAMIE_DEBUG=1 -- python3 /app/bot.py "$@" ;;
   google-login)
     [[ "${1:-main}" =~ ^[A-Za-z0-9_-]+$ ]] || { echo "Name: letters, digits, - and _ only"; exit 1; }
@@ -116,11 +126,43 @@ learned = json.loads(sys.argv[2]); json.dump({**learned, **room}, open(p, "w"), 
       echo "JAMIE_CONTROLLER_TOKEN=$(openssl rand -hex 24)" >> .env
     fi
     docker build -q -t jamie-controller controller >/dev/null
+    # Projects (the extension's Project dropdown): every folder in the projects folder, where "Add from
+    # GitHub" also clones to, plus JAMIE_PROJECTS=name=/path,name2=/path2 for folders that live elsewhere
+    home=$(sed -n 's/^JAMIE_PROJECTS_HOME=//p' .env); home=${home:-$HOME/jamie-projects}
+    mkdir -p "$home"; home=$(cd "$home" && pwd)
+    shown=$home  # in Windows Explorer, a WSL folder is at \\wsl.localhost\<distro>\...
+    [ -n "${WSL_DISTRO_NAME:-}" ] && shown="\\\\wsl.localhost\\$WSL_DISTRO_NAME${home//\//\\}"
+    echo "Projects folder: $shown"
+    projects=(-v "$home:/projects" -e JAMIE_PROJECTS_SHOWN="$shown")
+    # What the controller can't see from its container: this computer's OS, and the user folders people may
+    # link folders from (-P: as Docker names them, e.g. /var/home/you when /home is a link)
+    os=linux homes=$(cd ~ && pwd -P) drives=""
+    [ "$(uname -s)" = Darwin ] && os=mac
+    if [ -n "${WSL_DISTRO_NAME:-}" ]; then  # WSL: also the Windows user folder, as WSL mounts it
+      os=wsl
+      # Where WSL mounts drives (wsl.conf's automount root, /mnt by default). Not wslpath: once Docker Desktop
+      # has mounted a Windows folder, wslpath names it by Docker's internal mount instead of /mnt/c/...
+      drives=$(sed -n 's/^[[:space:]]*root[[:space:]]*=[[:space:]]*//p' /etc/wsl.conf 2>/dev/null | tail -n1 | tr -d '"')
+      drives=${drives:-/mnt}; drives=${drives%/}
+      win=$(cmd.exe /c 'echo %USERPROFILE%' 2>/dev/null | tr -d '\r') || true
+      if [[ "$win" =~ ^([A-Za-z]):\\(.*)$ ]]; then
+        rest=${BASH_REMATCH[2]}
+        homes="$homes:$drives/$(printf %s "${BASH_REMATCH[1]}" | tr A-Z a-z)/${rest//\\//}"
+      fi
+    fi
+    projects+=(-e JAMIE_HOST_OS="$os" -e JAMIE_HOST_HOMES="$homes" -e JAMIE_WSL_DRIVES="$drives")
+    IFS=, read -ra entries <<< "$(sed -n 's/^JAMIE_PROJECTS=//p' .env)"
+    for e in "${entries[@]}"; do
+      name=${e%%=*} path=${e#*=}
+      [[ "$name" =~ ^[A-Za-z0-9_-]+$ && -d "$path" ]] || { echo "JAMIE_PROJECTS: '$e' should be name=/existing/folder"; exit 1; }
+      projects+=(-v "$(cd "$path" && pwd):/linked/$name")
+      echo "Project $name: $path"
+    done
     # shortcut: the repo is mounted, not baked in, so edits apply without a rebuild; COPY it in for the homelab
     docker run --rm --init --name jamie-controller -p 127.0.0.1:7070:7070 \
       -e JAMIE_CONTROLLER_TOKEN="$(sed -n 's/^JAMIE_CONTROLLER_TOKEN=//p' .env | tail -n1)" \
       ${PLATFORM:+-e DOCKER_DEFAULT_PLATFORM=$PLATFORM} \
-      -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD:/jamie:ro" \
+      -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD:/jamie:ro" "${projects[@]}" \
       -v jamie-claude:/logins/claude:ro \
       -v jamie-codex:/logins/codex:ro -v jamie-gemini:/logins/gemini:ro \
       jamie-controller ;;

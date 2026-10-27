@@ -270,6 +270,35 @@ transcript, and anything the agent saves to `/files` are kept per room. Copy the
 `./jamie.sh files --env <room>`. Shortcuts Jamie taught itself are listed with `./jamie.sh learned
 --env <room>`, and `--keep` writes them into the room's `controls.json` so they can be committed.
 
+### Give Jamie your project
+
+Jamie can work in one of your own folders, like a dashboard repo or a folder of CSVs, the same way
+Claude Code does on your machine. It can read the data, run code, and fix or add charts on screen.
+
+1. Add the project from the extension: open **Add a project** under the Project dropdown, and either:
+   - paste a folder's path (`C:\Users\you\Documents\sales`; in File Explorer, right-click it and pick
+     **Copy as path**) and click **Link**. Jamie works on that original folder, where it is. Only
+     folders inside your user folder can be linked.
+   - paste a GitHub repo (`github.com/owner/repo`) and click **Clone**. For a private repo, first add
+     a GitHub token under **Settings**. The token is only used for that clone; Jamie never sees it.
+   - or put any folder in the projects folder (`~/jamie-projects`; the popup shows its path, with a
+     Windows Explorer path on WSL), then reopen the popup.
+2. Pick it as the **Project**. The **data** room has pandas, matplotlib, seaborn and plotly ready.
+   Without the extension: `./jamie.sh join <url> --env data --project ~/sales-dashboard`.
+3. In the call: "Jamie, we wish we had revenue by region for last quarter as a chart", or "Jamie,
+   the churn chart looks wrong: the line drops to zero in March."
+
+The folder is mounted live at `/workspace/project`, so **Jamie's changes are real changes to your
+files**. It's told to write new files instead of overwriting yours and never to touch the data
+files. Still, use git, or keep a copy. Everyone in the call can direct it, so only pick a project
+for calls with people you trust. Jamie runs as a different user, so starting it with a project
+makes the folder group-writable (for your own group). That way Jamie can edit it, and you can edit
+what Jamie writes.
+
+A folder that has to stay where it is, like one in OneDrive, can be linked instead: add
+`JAMIE_PROJECTS=name=/path,name2=/path2` to `.env` and restart the controller.
+`JAMIE_PROJECTS_HOME` moves the projects folder.
+
 ### Without the extension
 
 ```bash
