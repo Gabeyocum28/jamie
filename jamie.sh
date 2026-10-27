@@ -47,10 +47,14 @@ image() {
   fi
 }
 
-run() {  # run [--screen-only] [docker flags...] -- <command...>
+run() {  # run [--screen-only|--no-ports] [docker flags...] -- <command...>
   local flags=() img ports=(6080 3000 5173 8000) port_flags=()
   while [ "$1" != -- ]; do
-    if [ "$1" = --screen-only ]; then ports=(6080); else flags+=("$1"); fi
+    case "$1" in
+      --screen-only) ports=(6080) ;;
+      --no-ports) ports=() ;;
+      *) flags+=("$1") ;;
+    esac
     shift
   done
   shift
@@ -82,7 +86,7 @@ case "$cmd" in
   agent-login)
     case "$1" in
       claude) run -- claude ;;                       # then /login; or use CLAUDE_CODE_OAUTH_TOKEN in .env
-      codex)  run -- codex login --device-auth ;;
+      codex)  run --no-ports -- codex login --device-auth ;;
       gemini) run -- gemini ;;                       # pick "Login with Google"; or GEMINI_API_KEY in .env
       *)      echo "usage: ./jamie.sh agent-login claude|codex|gemini"; exit 1 ;;
     esac ;;
