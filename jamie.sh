@@ -73,7 +73,7 @@ case "$cmd" in
       *)      echo "usage: ./jamie.sh agent-login claude|codex|gemini"; exit 1 ;;
     esac ;;
   shell) run -- bash ;;
-  test)  run -- bash -c "cd /app && python3 test_env.py && python3 test_hearing.py && python3 test_voice.py && python3 test_notes.py && python3 test_show.py && python3 test_avatar.py"
+  test)  run -- bash -c "cd /app && python3 test_env.py && python3 test_hearing.py && python3 test_voice.py && python3 test_notes.py && python3 test_show.py && python3 test_avatar.py && python3 test_workers.py"
          (cd controller && JAMIE_ROOT=.. python3 test_server.py) ;;
   e2e)
     if [ "$1" = all ]; then
