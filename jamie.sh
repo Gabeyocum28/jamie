@@ -9,6 +9,7 @@
 #   ./jamie.sh test                     run the self-checks
 #   ./jamie.sh e2e                      end-to-end check in a real Meet (Jamie hosts it alone; ~3 min)
 #   ./jamie.sh judge                    how well the judge reads requests (real model calls, ~30s)
+#   ./jamie.sh learned [--env N] [--keep]  shortcuts Jamie taught itself; --keep adds them to the room's controls.json
 #   ./jamie.sh controller               the API that starts a Jamie per meeting (localhost:7070)
 set -e
 cd "$(dirname "$0")"
@@ -44,7 +45,7 @@ run() {  # run [docker flags...] -- <command...>
   docker run --rm -i --init --shm-size 2g --name "jamie-$ENV_NAME" \
     -p 127.0.0.1:6080:6080 -p 127.0.0.1:3000:3000 -p 127.0.0.1:5173:5173 -p 127.0.0.1:8000:8000 \
     --env-file .env -e JAMIE_ENV="$ENV_NAME" "${flags[@]}" --label "jamie.google=${JAMIE_GOOGLE:-main}" \
-    -v "jamie-google-${JAMIE_GOOGLE:-main}:/data" \
+    -v "jamie-google-${JAMIE_GOOGLE:-main}:/data" -v "jamie-learned-$ENV_NAME:/learned" \
     -v jamie-claude:/home/pwuser/.claude -v jamie-codex:/home/pwuser/.codex -v jamie-gemini:/home/pwuser/.gemini \
     -v "$PWD/workspace/$ENV_NAME:/workspace" \
     -v "$PWD/environments/$ENV_NAME:/environment:ro" \
@@ -69,8 +70,18 @@ case "$cmd" in
   shell) run -- bash ;;
   test)  run -- bash -c "cd /app && python3 test_env.py && python3 test_hearing.py && python3 test_voice.py && python3 test_notes.py && python3 test_show.py && python3 test_avatar.py"
          (cd controller && JAMIE_ROOT=.. python3 test_server.py) ;;
-  e2e)   run -- python3 /app/e2e.py ;;
+  e2e)   run -- python3 /app/e2e.py "$@" ;;
   judge) run -- bash -c "cd /app && python3 judge_eval.py" ;;
+  learned)
+    json=$(docker run --rm -v "jamie-learned-$ENV_NAME:/learned" --entrypoint cat jamie-base /learned/controls.json 2>/dev/null || echo "{}")
+    echo "$json"
+    if [[ " $* " == *" --keep "* ]]; then
+      python3 -c 'import json, sys; p = sys.argv[1]
+try: room = json.load(open(p))
+except FileNotFoundError: room = {}
+learned = json.loads(sys.argv[2]); json.dump({**learned, **room}, open(p, "w"), indent=2); print(f"Kept {len(learned)} in {p}")' \
+        "environments/$ENV_NAME/controls.json" "$json"
+    fi ;;
   controller)
     grep -q '^JAMIE_CONTROLLER_TOKEN=.' .env || echo "JAMIE_CONTROLLER_TOKEN=$(openssl rand -hex 24)" >> .env
     docker build -q -t jamie-controller controller >/dev/null
@@ -81,5 +92,5 @@ case "$cmd" in
       -v jamie-claude:/logins/claude:ro \
       -v jamie-codex:/logins/codex:ro -v jamie-gemini:/logins/gemini:ro \
       jamie-controller ;;
-  *)     sed -n '4,12p' "$0" | sed 's/^# //' ;;
+  *)     sed -n '4,13p' "$0" | sed 's/^# //' ;;
 esac

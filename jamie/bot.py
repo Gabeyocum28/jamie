@@ -13,6 +13,7 @@ import base64
 import json
 import os
 import re
+import shlex
 import shutil
 import socket
 import subprocess
@@ -71,6 +72,11 @@ def core_prompt(cwd):
         "there, open the file you're writing with `python3 /app/bot.py --ide <file>` so they can watch, then run it "
         "and --show the result. If they ask about something on the shared screen ('that video', 'this link'), "
         "click it in the stage tab rather than searching again. "
+        "You can teach yourself shortcuts. When you've done something people will likely ask for again and it "
+        "comes down to key presses in the shared tab or one command, save it as an instant control so next time "
+        "it happens in a second without you: `python3 /app/bot.py --learn <name> --description '<what people "
+        "would say>' --keys <Key> [<Key>...]` or `--run '<command, {arg} = what they asked for>'`. Also do this "
+        "whenever someone asks you to learn or remember a shortcut. "
         "Don't tell people you can't do something on the computer or in the browser: try, and if one way "
         "fails, try another."
     )
@@ -679,17 +685,43 @@ def describe(screen):
             f"Visible: {'; '.join(screen['items'][:40]) or '(nothing clickable)'}")
 
 
-def room_controls():
-    """controls.json from the room, or {} (a broken file is reported, not fatal)."""
-    path = os.path.join(WORKSPACE, "controls.json")
+LEARNED = os.environ.get("JAMIE_LEARNED", "/learned")  # a volume per room: what Jamie learned, kept across calls
+
+
+def read_controls(path):
+    """Controls from a JSON file: {"name": {"description", "keys": [...]} or {"description", "run": "cmd {arg}"}}."""
     if not os.path.exists(path):
         return {}
     try:
         with open(path) as f:
-            return {k: v for k, v in json.load(f).items() if isinstance(v.get("keys"), list)}
+            return {k: v for k, v in json.load(f).items()
+                    if isinstance(v, dict) and (isinstance(v.get("keys"), list) or isinstance(v.get("run"), str))}
     except Exception as e:
-        log("Ignoring controls.json:", e)
+        log(f"Ignoring {path}:", e)
         return {}
+
+
+def room_controls():
+    """The room's controls.json plus what Jamie has learned in this room (the room's own win on a clash)."""
+    return {**read_controls(os.path.join(LEARNED, "controls.json")), **read_controls(os.path.join(WORKSPACE, "controls.json"))}
+
+
+def learn(name, description, keys=None, run=None):
+    """Save a new instant control for this room. Returns what was saved."""
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,39}", name or ""):
+        raise ValueError("name: lowercase letters, digits and dashes, like next-slide")
+    if name in BUILTIN_CONTROLS:
+        raise ValueError(f"{name!r} is built in already")
+    if bool(keys) == bool(run):
+        raise ValueError("give either --keys or --run")
+    path = os.path.join(LEARNED, "controls.json")
+    learned = read_controls(path)
+    learned[name] = {"description": description, **({"keys": keys} if keys else {"run": run})}
+    os.makedirs(LEARNED, exist_ok=True)
+    with open(path + ".tmp", "w") as f:
+        json.dump(learned, f, indent=2)
+    os.replace(path + ".tmp", path)  # the bot may be reading it
+    return f"Learned {name!r}: {description}"
 
 
 def controls():
@@ -726,11 +758,20 @@ async def ide(page, path=""):
 async def control(page, name, arg=""):
     """Do an instant control on the shared tab. Returns what happened."""
     if name in room_controls():
+        c = room_controls()[name]
+        if "run" in c:  # a command; {arg} becomes the (shell-quoted) argument
+            proc = await asyncio.create_subprocess_shell(
+                c["run"].replace("{arg}", shlex.quote(arg or "")), cwd=WORKSPACE,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+            out = (await asyncio.wait_for(proc.communicate(), 30))[0].decode(errors="replace").strip()
+            if proc.returncode:
+                raise RuntimeError(out[-200:] or f"exit {proc.returncode}")
+            return out[-300:] or "Done."
         stage = await stage_tab(page)
         await stage.bring_to_front()
-        for key in room_controls()[name]["keys"]:
+        for key in c["keys"]:
             await stage.keyboard.press(key)
-        return f"Pressed {' '.join(room_controls()[name]['keys'])}."
+        return f"Pressed {' '.join(c['keys'])}."
     if name in SCROLL:
         await (await stage_tab(page)).evaluate(SCROLL[name])
         return "Scrolled."
@@ -780,6 +821,9 @@ async def run_control(page, name, arg):
         log("control:", name, arg, "->", result)
         if name in ("play-video", "open", "show", "ide", "notes"):  # took a moment: say what's up (pause etc. speak for themselves)
             speak_soon(page, result)
+        elif "run" in room_controls().get(name, {}):  # a command's output is the answer
+            speak_soon(page, voice.spoken(result))
+            await send(page, result)
     except Exception as e:
         log("control failed:", name, arg, e)
         await send(page, f"Couldn't {name} {arg}: {str(e).splitlines()[0]}".replace("  ", " "))
@@ -856,6 +900,8 @@ async def listen(page, agent):
     await chat_box(page)
     await captions_on(page)
     last_check = last_beat = last_skip = time.monotonic()
+    learned_file = os.path.join(LEARNED, "controls.json")
+    learned_seen = os.path.exists(learned_file) and os.path.getmtime(learned_file)
 
     if DEBUG:
         path = os.path.join(WORKSPACE, "meet-dump.html")
@@ -912,6 +958,11 @@ async def listen(page, agent):
                     pass
             if time.monotonic() - last_check > 5:
                 last_check = time.monotonic()
+                learned_at = os.path.exists(learned_file) and os.path.getmtime(learned_file)
+                if learned_at != learned_seen and not judging:  # Jamie learned a shortcut: the judge should know it
+                    learned_seen, judge.controls = learned_at, controls()
+                    await judge.close()  # the next judgment starts a judge with the new list
+                    log("Learned controls now:", ", ".join(sorted(read_controls(learned_file))) or "none")
                 try:
                     await captions_on(page, first=False)
                 except Exception as e:
@@ -1118,13 +1169,22 @@ def main():
     ap.add_argument("--play", metavar="QUERY", help="screen-share the top YouTube result for QUERY")
     ap.add_argument("--video", choices=VIDEO_ACTIONS, help="control the video in the shared tab")
     ap.add_argument("--ide", nargs="?", const=".", metavar="FILE", help="show VS Code on screen (and open FILE)")
+    ap.add_argument("--learn", metavar="NAME", help="save a new instant control for this room (with --description and --keys or --run)")
+    ap.add_argument("--description", help="for --learn: what people would say to ask for it")
+    ap.add_argument("--keys", nargs="+", help="for --learn: keys to press in the shared tab, e.g. ArrowRight")
+    ap.add_argument("--run", help="for --learn: a command to run instead; {arg} is replaced by what they asked for")
     ap.add_argument("--env", default=os.environ.get("JAMIE_ENV", "default"),
                     help="folder in environments/ (jamie.sh mounts it; used here for messages)")
     ap.add_argument("--agent", default=os.environ.get("JAMIE_AGENT", "claude"), help="claude | codex | gemini")
     ap.add_argument("--personality", default=os.environ.get("JAMIE_PERSONALITY", "default"),
                     help="file in personalities/ (without .md)")
     a = ap.parse_args()
-    if a.login:
+    if a.learn:
+        try:
+            print(learn(a.learn, a.description or a.learn, a.keys, a.run))
+        except ValueError as e:
+            sys.exit(f"Couldn't learn it: {e}")
+    elif a.login:
         asyncio.run(login())
     elif a.ide:
         asyncio.run(ide_cli(a.ide))
