@@ -377,6 +377,44 @@ async def vibe():
     print("e2e OK")
 
 
+async def click_on_screen():
+    """./jamie.sh e2e open: "open the Evolution section" clicks that link on the shared page."""
+    audio = "/tmp/jamie-test-open.wav"
+    timeline(audio, [(25, os.path.join(HERE, "test-open-0.wav")), (25, os.path.join(HERE, "test-open-1.wav"))])
+    url = await new_meeting()
+    print("e2e: meeting", url, flush=True)
+    proc = await asyncio.create_subprocess_exec(
+        "python3", os.path.join(HERE, "bot.py"), url, env={**os.environ, "JAMIE_TEST_AUDIO": audio},
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+    seen, start = [], time.monotonic()
+
+    async def pump():
+        async for line in proc.stdout:
+            seen.append(line.decode(errors="replace").rstrip())
+            print("  bot |", seen[-1], flush=True)
+
+    reader = asyncio.create_task(pump())
+    try:
+        while time.monotonic() - start < 200 and proc.returncode is None and not any("control: open" in s for s in seen):
+            await asyncio.sleep(1)
+        await asyncio.sleep(2)
+        where = await stage_eval("location.href")
+    finally:
+        if proc.returncode is None:
+            proc.terminate()
+        await proc.wait()
+        reader.cancel()
+    shown = any("control: show" in s and "wikipedia.org" in s.lower() for s in seen)
+    checks = [(shown, "\"pull up the Wikipedia page\" was an instant control"),
+              ("#Evolution" in str(where), f"\"open the evolution section\" clicked it on screen ({where})")]
+    for good, what in checks:
+        print(f"e2e: {'ok ' if good else 'NO '} {what}")
+    if not all(good for good, _ in checks):
+        sys.exit(1)
+    print("e2e OK")
+
+
 if __name__ == "__main__":
     env = os.environ.get("JAMIE_ENV", "default")
-    asyncio.run(room(env) if env in ROOMS else learn() if "learn" in sys.argv else vibe() if "vibe" in sys.argv else main())
+    asyncio.run(room(env) if env in ROOMS else learn() if "learn" in sys.argv else vibe() if "vibe" in sys.argv
+                else click_on_screen() if "open" in sys.argv else main())
