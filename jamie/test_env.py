@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 
 import bot
 
@@ -84,6 +85,11 @@ def main():
     assert bot.narrate({"name": "Write", "input": {"file_path": "/workspace/app/index.html"}}) == "Writing index.html."
     assert bot.narrate({"name": "Bash", "input": {"command": "ls -la"}}) is None
     assert bot.narrate({"name": "Read", "input": {"file_path": "x"}}) is None
+
+    # Test mode: Jamie's own voice (captioned "You") is told apart from the test's recorded speech by its words
+    bot.speaking["said"] = [(time.monotonic(), "Writing style.css."), (time.monotonic(), "Got it, building a snake game.")]
+    assert bot.said_by_me("Writing style dot CSS.") and bot.said_by_me("Got it. Building a snake game.")
+    assert not bot.said_by_me("Jamie, never mind, cancel that.")
 
     # Learning: Jamie saves its own instant controls per room
     bot.LEARNED = os.path.join(root, "learned")

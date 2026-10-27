@@ -66,6 +66,11 @@ CASES = [
     ("Jamie revealed the answer.", ["Gabe"], TRIVIA, "control:reveal-answer"),
     ("Jamie next card.", ["Gabe"], CARDS, "control:next-card"),
     ("I showed the answer to my sister yesterday", ["Gabe"], CARDS, "none"),
+    # While Jamie is busy: "never mind" stops the task; other controls still mean themselves
+    ("Jamie, never mind, cancel that.", ["Gabe"], NOTHING, "control:cancel", "Build a tip calculator web page"),
+    ("Jamie stop, that's the wrong app", ["Gabe"], NOTHING, "control:cancel", "Build a tip calculator web page"),
+    ("Jamie, stop talking", ["Gabe"], NOTHING, "control:quiet", "Build a tip calculator web page"),
+    ("Jamie, pause the video", ["Gabe"], YOUTUBE, "control:pause", "Find the lyrics for this song"),
     # Unfinished
     ("Hey Jamie, can we build out?", ["Gabe"], NOTHING, "wait"),
 ]
@@ -74,9 +79,9 @@ CASES = [
 async def main():
     judge = hearing.Judge("Jamie", {**bot.BUILTIN_CONTROLS, **ROOM_CONTROLS})
     passed, times = 0, []
-    for said, people, screen, want in CASES:
+    for said, people, screen, want, *busy in CASES:
         start = time.monotonic()
-        v = await judge([], [(people[0], said)], people=people, screen=screen)
+        v = await judge([], [(people[0], said)], people=people, screen=screen, busy=busy[0] if busy else "")
         times.append(time.monotonic() - start)
         got = v["action"] + (f":{v['control']}" if v["action"] == "control" else "")
         ok = got == want
