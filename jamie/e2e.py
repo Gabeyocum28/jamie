@@ -210,5 +210,54 @@ async def main():
     print("e2e OK")
 
 
+async def fun():
+    """./jamie.sh e2e --env fun: trivia built by the agent, then driven by the room's own instant controls."""
+    audio = "/tmp/jamie-test-fun.wav"
+    timeline(audio, [(25, os.path.join(HERE, "test-trivia.wav")), (75, os.path.join(HERE, "test-next.wav")),
+                     (12, os.path.join(HERE, "test-reveal.wav"))])
+    url = await new_meeting()
+    print("e2e: meeting", url, flush=True)
+    proc = await asyncio.create_subprocess_exec(
+        "python3", os.path.join(HERE, "bot.py"), url, env={**os.environ, "JAMIE_TEST_AUDIO": audio},
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+    seen = []
+
+    async def pump():
+        async for line in proc.stdout:
+            seen.append(line.decode(errors="replace").rstrip())
+            print("  bot |", seen[-1], flush=True)
+
+    async def until(test, limit):
+        start = time.monotonic()
+        while time.monotonic() - start < limit and proc.returncode is None and not test():
+            await asyncio.sleep(2)
+
+    reader = asyncio.create_task(pump())
+    try:
+        await until(lambda: any(" -> " in s for s in seen), 180)
+        await asyncio.sleep(3)
+        first = await stage_eval("document.getElementById('pos')?.innerText || ''")
+        question = await stage_eval("document.getElementById('q')?.innerText || ''")
+        await until(lambda: any("control: next-question" in s for s in seen), 120)
+        await asyncio.sleep(1)
+        second = await stage_eval("document.getElementById('pos')?.innerText || ''")
+        await until(lambda: any("control: reveal-answer" in s for s in seen), 60)
+        await asyncio.sleep(1)
+        answer = await stage_eval("document.getElementById('answer')?.innerText || ''")
+    finally:
+        if proc.returncode is None:
+            proc.terminate()
+        await proc.wait()
+        reader.cancel()
+    checks = [(bool(question), f"the agent put a trivia game on screen ({question!r}, {first!r})"),
+              (bool(second) and second != first, f"\"next question\" (the room's own control) moved it on ({second!r})"),
+              (bool(answer.strip()), f"\"reveal the answer\" showed it ({answer.strip()[:60]!r})")]
+    for good, what in checks:
+        print(f"e2e: {'ok ' if good else 'NO '} {what}")
+    if not all(good for good, _ in checks):
+        sys.exit(1)
+    print("e2e OK")
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(fun() if os.environ.get("JAMIE_ENV") == "fun" else main())
