@@ -79,6 +79,12 @@ def main():
         assert c.proc is None and not c.has_session
     asyncio.run(twice())
 
+    # Narrating long jobs: a few words per meaningful step, silence for housekeeping
+    assert bot.narrate({"name": "Bash", "input": {"command": "python3 /app/bot.py --ide"}}) == "Opening the editor."
+    assert bot.narrate({"name": "Write", "input": {"file_path": "/workspace/app/index.html"}}) == "Writing index.html."
+    assert bot.narrate({"name": "Bash", "input": {"command": "ls -la"}}) is None
+    assert bot.narrate({"name": "Read", "input": {"file_path": "x"}}) is None
+
     # Learning: Jamie saves its own instant controls per room
     bot.LEARNED = os.path.join(root, "learned")
     for bad in [("Next Slide", "x", ["ArrowRight"], None), ("pause", "x", ["k"], None), ("ok", "x", None, None),

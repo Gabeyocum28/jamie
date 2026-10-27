@@ -517,6 +517,27 @@ def codex_mcp(servers):
     return flags
 
 
+def narrate(tool):
+    """A few words on what the agent is doing, for people waiting in the call (None: not worth saying)."""
+    name, args = tool.get("name", ""), tool.get("input", {})
+    cmd = args.get("command", "")
+    if "--ide" in cmd:
+        return "Opening the editor."
+    if "--play" in cmd:
+        return "Finding the video."
+    if "--show" in cmd:
+        return "Putting it on screen."
+    if name in ("Write", "Edit") and args.get("file_path"):
+        return f"Writing {os.path.basename(args['file_path'])}."
+    if name == "WebSearch" or "search" in name.lower():
+        return "Searching the web."
+    if name == "WebFetch" or "navigate" in name:
+        return "Reading up on it."
+    if name == "Bash" and re.search(r"\b(npm|pip|python3?|node)\b", cmd) and "/app/bot.py" not in cmd:
+        return "Running it."
+    return None
+
+
 class Agent:
     def __init__(self, name, servers):
         self.name, self.servers = name, servers
@@ -556,7 +577,7 @@ class Agent:
             await self.proc.wait()
         self.proc = None
 
-    async def run_claude(self, prompt):
+    async def run_claude(self, prompt, progress=None):
         await self.start()
         msg = {"type": "user", "message": {"role": "user", "content": prompt}}
         self.proc.stdin.write((json.dumps(msg) + "\n").encode())
@@ -565,6 +586,10 @@ class Agent:
             async with asyncio.timeout(TIMEOUT):
                 while line := await self.proc.stdout.readline():
                     event = json.loads(line)
+                    if progress and event.get("type") == "assistant":
+                        for block in event.get("message", {}).get("content", []):
+                            if block.get("type") == "tool_use" and (step := narrate(block)):
+                                progress(step)
                     if event.get("type") == "result":
                         self.has_session = True
                         out = (event.get("result") or "").strip()
@@ -578,10 +603,10 @@ class Agent:
         self.proc = None  # it exited; the next request starts it again (with --continue)
         return "claude stopped unexpectedly. Try again."
 
-    async def run(self, prompt):
+    async def run(self, prompt, progress=None):
         log(self.name, "<-", prompt)
         if self.name == "claude":
-            return await self.run_claude(prompt)
+            return await self.run_claude(prompt, progress)
         if os.path.exists(CODEX_LAST):
             os.remove(CODEX_LAST)
         proc = await asyncio.create_subprocess_exec(
@@ -615,8 +640,15 @@ async def worker(page, agent, queue, state):
         prompt = await queue.get()
         state["busy"] = prompt
         await avatar(page, "thinking")
+        said = {"at": time.monotonic(), "last": ""}  # the ack was just said
+
+        def progress(step):  # narrate long jobs, at most every 10s, never the same thing twice in a row
+            if step != said["last"] and time.monotonic() - said["at"] > 10:
+                said.update(at=time.monotonic(), last=step)
+                log("progress:", step)
+                speak_soon(page, step)
         try:
-            reply = await agent.run(prompt)
+            reply = await agent.run(prompt, progress)
             state["last_reply"] = reply
             speak_soon(page, voice.spoken(reply))
             await send(page, reply)
