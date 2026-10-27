@@ -125,7 +125,7 @@ class Judge:
     doesn't pay for starting Claude, and the first one doesn't land on a cold start. No extended
     thinking and plain JSON text (not --json-schema, which adds a round trip): ~1s instead of 3-5s."""
 
-    RESTART_AFTER = 40  # judgments; each one adds to the process's conversation
+    RESTART_AFTER = 15  # judgments: each one gets its own context, so a long history only adds noise
 
     def __init__(self, name, controls=None, model="haiku", timeout=30):
         self.name, self.model, self.timeout = name, model, timeout

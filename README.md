@@ -182,6 +182,7 @@ the Jamie card in `chrome://extensions`.
    | "Jamie, show the meeting notes" | Live notes, updating on screen as people talk |
    | "Jamie, let's play space trivia" (fun room) | Builds a game show; "next question", "reveal the answer" are instant |
    | "Jamie, learn a shortcut: when I say coin flip, flip a coin" | Saves it; "Jamie, coin flip" is now instant |
+   | "Jamie, never mind" (while it's working) | Stops the task right away; it still remembers the conversation |
    | "Jamie, stop talking" / "stop sharing" / "you can leave" | Leaving posts the decisions and action items to chat |
 
    - **Follow-ups** right after Jamie answers don't need its name ("make it red instead").
@@ -339,7 +340,9 @@ Docker things this creates on your machine:
 ./jamie.sh test                       run all self-checks (fast, no real call)
 ./jamie.sh judge                      score the judge on 36 real phrases (~30s of model calls)
 ./jamie.sh e2e                        end-to-end check in a real Meet (~5 min, see below)
+./jamie.sh e2e all                    every real-call scenario below, one after another (~25 min)
 ./jamie.sh e2e learn                  ...Jamie teaches itself a shortcut, then uses it
+./jamie.sh e2e vibe|open|cancel       ...builds an app live / clicks what's on screen / "never mind"
 ./jamie.sh e2e --env fun|study|work   ...a room's on-screen app, driven by its own controls
 ./jamie.sh learned [--env N] [--keep] shortcuts Jamie taught itself (--keep: into controls.json)
 ./jamie.sh files [--env N]            copy kept notes/transcripts/work to ./files/<room>/

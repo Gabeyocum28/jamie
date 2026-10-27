@@ -45,7 +45,8 @@ Talk clearly and pause after each request. Jamie acts when you stop talking.
 
 - **Jamie didn't react:** say it again, starting with "Hey Jamie". Captions sometimes miss the first
   word. Typing works as a backup: `/jamie <request>` in the chat, using your `JAMIE_TRIGGER`.
-- **It went off on the wrong thing:** "Jamie, stop sharing", then ask again more precisely.
+- **It went off on the wrong thing:** "Jamie, never mind" stops it mid-task. Then ask again more
+  precisely.
 - **It's talking too long:** "Jamie, stop talking."
 - **To see what it's thinking:** open **watch** in the extension, or `docker logs -f <id>`. The
   `judge:` lines show how it read each sentence.

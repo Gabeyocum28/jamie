@@ -7,7 +7,8 @@
 #   ./jamie.sh debug <meet-url> [...]   join + dump Meet's DOM to workspace/<env>/meet-dump.html
 #   ./jamie.sh shell [--env NAME]       a shell inside the environment
 #   ./jamie.sh test                     run the self-checks
-#   ./jamie.sh e2e                      end-to-end check in a real Meet (Jamie hosts it alone; ~3 min)
+#   ./jamie.sh e2e                      end-to-end check in a real Meet (Jamie hosts it alone; ~5 min)
+#   ./jamie.sh e2e all                  every real-call scenario in turn, with a scoreboard (~25 min)
 #   ./jamie.sh judge                    how well the judge reads requests (real model calls, ~30s)
 #   ./jamie.sh learned [--env N] [--keep]  shortcuts Jamie taught itself; --keep adds them to the room's controls.json
 #   ./jamie.sh files [--env N]          copy what Jamie kept (meeting notes, things it built) to ./files/<room>/
@@ -71,7 +72,17 @@ case "$cmd" in
   shell) run -- bash ;;
   test)  run -- bash -c "cd /app && python3 test_env.py && python3 test_hearing.py && python3 test_voice.py && python3 test_notes.py && python3 test_show.py && python3 test_avatar.py"
          (cd controller && JAMIE_ROOT=.. python3 test_server.py) ;;
-  e2e)   run -- python3 /app/e2e.py "$@" ;;
+  e2e)
+    if [ "$1" = all ]; then
+      results=()
+      for s in "" learn vibe open cancel "--env fun" "--env study" "--env work"; do
+        # shellcheck disable=SC2086
+        if "$0" e2e $s > "/tmp/jamie-e2e-${s// /}.log" 2>&1; then results+=("ok  ${s:-main}"); else results+=("NO  ${s:-main}  (log: /tmp/jamie-e2e-${s// /}.log)"); fi
+        echo "${results[-1]}"
+      done
+      printf '\n%s\n' "${results[@]}" | grep -q "^NO" && exit 1 || { echo "all real-call scenarios passed"; exit 0; }
+    fi
+    run -- python3 /app/e2e.py "$@" ;;
   judge) run -- bash -c "cd /app && python3 judge_eval.py" ;;
   files)
     mkdir -p "files/$ENV_NAME"
@@ -97,5 +108,5 @@ learned = json.loads(sys.argv[2]); json.dump({**learned, **room}, open(p, "w"), 
       -v jamie-claude:/logins/claude:ro \
       -v jamie-codex:/logins/codex:ro -v jamie-gemini:/logins/gemini:ro \
       jamie-controller ;;
-  *)     sed -n '4,14p' "$0" | sed 's/^# //' ;;
+  *)     sed -n '4,15p' "$0" | sed 's/^# //' ;;
 esac
