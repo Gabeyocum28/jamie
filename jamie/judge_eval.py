@@ -81,6 +81,8 @@ SOLO = [
     ("Can you pull up a video about funny cats?", ["Gabe"], 1, "control:play-video"),
     ("Mom, can you grab me a water? I'm on a call", ["Gabe"], 1, "none"),
     ("Hey!", ["Gabe"], 1, "none"),
+    ("Hey Gabeet, for a YouTube video about kauchi sequence.", ["Gabe Yocum"], 1, "request"),  # real, once ignored
+    ("Hey Jay, can you look up the weather in Denver?", ["Gabe"], 1, "request"),
     ("Sam, what did you think of the demo?", ["Gabe", "Sam"], 2, "none"),  # several people: still needs the name
 ]
 

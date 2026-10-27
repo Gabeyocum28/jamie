@@ -198,8 +198,10 @@ class Judge:
         fmt = lambda ls: "\n".join(f"{s}: {t}" for s, t in ls)  # noqa: E731
         solo = (f"Only one person is in this call with {self.name}, so there's nobody else for them to talk to: "
                 f"a question or ask from them is a \"request\" to {self.name} even without its name, unless it's "
-                f"clearly for someone else (a phone call, someone in their room, another name) or "
-                f"they're thinking out loud. Greetings and chatter are still \"none\".\n\n") if others == 1 else ""
+                f"clearly for someone else (a phone call, someone in their room) or they're thinking out loud. "
+                f"A garbled or unfamiliar name at the start (\"Hey Gabeet, a video about ...\") is {self.name} "
+                f"misheard, and half-sentences like \"for a video about X\" are still a request. "
+                f"Greetings and chatter are still \"none\".\n\n") if others == 1 else ""
         prompt = (f"{solo}People in the call (heard so far): {', '.join(people) or 'unknown'}\n\n"
                   f"{screen or 'Nothing is being shared.'}\n\n"
                   f"Earlier conversation:\n{fmt(context) or '(none)'}\n\n"
