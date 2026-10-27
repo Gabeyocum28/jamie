@@ -289,7 +289,7 @@
 
   // Jamie's microphone is a mixer: silent unless Jamie speaks (voice.say), so it can stay unmuted.
   // The container's fake device (a beep) never reaches Meet; tests pass their recording through.
-  const voice = (window.__jamieVoice = { ctx: null, dest: null, source: null });
+  const voice = (window.__jamieVoice = { ctx: null, dest: null, source: null, generation: 0, finish: null });
   async function mic(constraints) {
     if (!voice.ctx) {
       voice.ctx = new AudioContext();
@@ -306,8 +306,14 @@
   }
   voice.say = async (b64) => {  // play audio (any format the browser decodes) into the call; resolves when done
     voice.stop();
+    const generation = voice.generation;
+    // Replies can arrive before Meet first asks for its microphone. Discard the unused clone.
+    if (!voice.ctx) (await mic({ audio: true })).forEach((track) => track.stop());
+    await voice.ctx.resume();
+    if (generation !== voice.generation) return;
     const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
     const buffer = await voice.ctx.decodeAudioData(bytes.buffer);
+    if (generation !== voice.generation) return;  // interrupted while decoding
     const src = (voice.source = voice.ctx.createBufferSource());
     src.buffer = buffer;
     src.connect(voice.analyser);
@@ -319,12 +325,29 @@
       const rms = Math.sqrt(level.reduce((s, v) => s + (v - 128) ** 2, 0) / level.length) / 128;
       if (av) av.mouth = Math.min(1, rms * 4);
     }, 50);
-    await new Promise((done) => { src.onended = done; src.start(); });
-    clearInterval(meter);
-    if (av) { av.mouth = null; if (av.state === "talking") av.state = prev === "talking" ? "listening" : prev || "listening"; }
-    voice.source = null;
+    await new Promise((done, reject) => {
+      let finished = false;
+      const finish = () => {
+        if (finished) return;
+        finished = true;
+        clearInterval(meter);
+        src.disconnect();
+        // An old source's delayed onended must not reset a newer reply's face or source.
+        if (voice.source === src) {
+          voice.source = voice.finish = null;
+          if (av) { av.mouth = null; if (av.state === "talking") av.state = prev === "talking" ? "listening" : prev || "listening"; }
+        }
+        done();
+      };
+      voice.finish = src.onended = finish;
+      try { src.start(); } catch (e) { reject(e); finish(); }
+    });
   };
-  voice.stop = () => { try { voice.source && voice.source.stop(); } catch (e) {} };
+  voice.stop = () => {
+    voice.generation++;  // also invalidates a reply still waiting for resume/decode
+    try { voice.source && voice.source.stop(); } catch (e) {}
+    if (voice.finish) voice.finish();
+  };
 
   navigator.mediaDevices.getUserMedia = async (constraints = {}) => {
     if (!constraints.video) {

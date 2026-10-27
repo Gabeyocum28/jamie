@@ -225,9 +225,45 @@ The judge uses the Claude login even if the agent is Codex or Gemini. Without a 
 falls back to reacting to the name. Code: `jamie/hearing.py`. `./jamie.sh judge` scores it on 36
 real phrases.
 
-**Voice.** Set `ELEVENLABS_API_KEY` (and optionally `ELEVENLABS_VOICE_ID`) in `.env` for
-ElevenLabs. Otherwise Jamie uses Piper, offline and free. `JAMIE_VOICE=off` keeps it silent.
-Code: `jamie/voice.py`. Chat always gets the full text; speech gets the first sentence or two.
+**Voice.** Connect your ElevenLabs subscription from the repo folder:
+
+```bash
+npx -y @elevenlabs/cli@latest onboard connect --env-path .env
+```
+
+Sign in to your existing account and authorize the setup. The official CLI saves
+`ELEVENLABS_API_KEY` in your local, gitignored `.env`. Alternatively, create a key with
+**Text to Speech** access in [ElevenLabs Developers](https://elevenlabs.io/app/developers/api-keys)
+and set it in `.env`. The key stays in the bot container; it is never sent to the extension or Meet.
+See [ElevenLabs authentication](https://elevenlabs.io/docs/api-reference/authentication).
+
+`ELEVENLABS_VOICE_ID` selects the voice (Rachel by default). Copy a different voice's ID from your
+ElevenLabs voice library. `ELEVENLABS_MODEL_ID` defaults to `eleven_flash_v2_5` for quick replies;
+the older `ELEVENLABS_MODEL` setting still works. Leave **Voice** enabled in the extension.
+
+Verify your key, voice and model before joining a call (this generates one short paid speech sample):
+
+```bash
+./jamie.sh voice-check
+./jamie.sh files                     # copies the sample to files/default/jamie-voice-check.mp3
+```
+
+Without Docker, Python 3.10+ can run the same check directly:
+
+```bash
+python jamie/voice.py --check --env-file .env --output workspace/jamie-voice-check.mp3
+```
+
+The check fails visibly for missing credentials, invalid keys, unavailable voices or exhausted
+quota; it never reports an offline fallback as an ElevenLabs success. Listen to the saved MP3,
+then start a new Jamie. Existing containers keep the settings they started with.
+
+During a call, Jamie uses Piper if no key is configured or ElevenLabs fails, and logs the reason
+for a fallback. `JAMIE_VOICE=off` keeps command-line runs silent; the extension's **Voice** toggle
+controls extension launches. Chat gets the full text; speech gets a short reply. Audio plays in
+reply order through Meet's microphone and drives the avatar's mouth. Saying "Jamie, stop talking"
+cancels playback and queued replies, including audio that was still being generated or decoded.
+Code: `jamie/voice.py`, `jamie/bot.py`, `extension/avatar.js`.
 
 **What's kept.** A Jamie's working folder goes when it leaves. The meeting's notes, its part of the
 transcript, and anything the agent saves to `/files` are kept per room. Copy them to your Mac with
@@ -346,6 +382,7 @@ Docker things this creates on your machine:
 ./jamie.sh debug <meet-url> [...]     join and dump Meet's page to workspace/<env>/meet-dump.html
 ./jamie.sh shell [--env NAME]         a shell inside a room's image
 ./jamie.sh test                       run all self-checks (fast, no real call)
+./jamie.sh voice-check [--env NAME]    verify ElevenLabs; save a short MP3 in the room's files
 ./jamie.sh judge                      score the judge on 36 real phrases (~30s of model calls)
 ./jamie.sh e2e                        end-to-end check in a real Meet (~5 min, see below)
 ./jamie.sh e2e all                    every real-call scenario below, one after another (~25 min)

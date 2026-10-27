@@ -7,6 +7,7 @@
 #   ./jamie.sh debug <meet-url> [...]   join + dump Meet's DOM to workspace/<env>/meet-dump.html
 #   ./jamie.sh shell [--env NAME]       a shell inside the environment
 #   ./jamie.sh test                     run the self-checks
+#   ./jamie.sh voice-check [--env NAME]  verify ElevenLabs and save a short spoken sample
 #   ./jamie.sh e2e                      end-to-end check in a real Meet (Jamie hosts it alone; ~5 min)
 #   ./jamie.sh e2e all                  every real-call scenario in turn, with a scoreboard (~25 min)
 #   ./jamie.sh judge                    how well the judge reads requests (real model calls, ~30s)
@@ -73,7 +74,13 @@ case "$cmd" in
       *)      echo "usage: ./jamie.sh agent-login claude|codex|gemini"; exit 1 ;;
     esac ;;
   shell) run -- bash ;;
-  test)  run -- bash -c "cd /app && python3 test_env.py && python3 test_hearing.py && python3 test_voice.py && python3 test_notes.py && python3 test_show.py && python3 test_avatar.py"
+  voice-check)
+    img=$(image)
+    voice_flags=(--env-file .env)
+    [ -f "environments/$ENV_NAME/.env" ] && voice_flags+=(--env-file "environments/$ENV_NAME/.env")
+    docker run --rm "${voice_flags[@]}" -v "jamie-files-$ENV_NAME:/files" \
+      --entrypoint python3 "$img" /app/voice.py --check --output /files/jamie-voice-check.mp3 ;;
+  test)  run -- bash -c "cd /app && python3 test_env.py && python3 test_hearing.py && python3 test_voice.py && python3 test_speech.py && python3 test_notes.py && python3 test_show.py && python3 test_avatar.py"
          (cd controller && JAMIE_ROOT=.. python3 test_server.py) ;;
   e2e)
     if [ "$1" = all ]; then

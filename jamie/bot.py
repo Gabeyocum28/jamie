@@ -941,8 +941,7 @@ async def control(page, name, arg=""):
         await show(page, "file://" + os.path.join(WORKSPACE, "notes.html"))
         return "The meeting notes are on screen."
     if name == "quiet":
-        speaking["hush"] += 1
-        await page.evaluate("window.__jamieVoice && window.__jamieVoice.stop()")
+        await stop_speaking(page)
         return "Quiet."
     return await video(page, name)
 
@@ -1120,7 +1119,7 @@ async def listen(page, agent):
             added = [b["text"][len(os.path.commonprefix([live.get(b["id"], ""), b["text"]])):] for b in talking]
             live = {b["id"]: b["text"] for b in snapshot or []}
             if added and voice_lock.locked() and any(judge.wake.search(a) for a in added):
-                await page.evaluate("window.__jamieVoice && window.__jamieVoice.stop()")  # let them talk
+                await stop_speaking(page)  # drop queued replies too, so they can talk
                 log("Stopped talking: someone said my name.")
             if bool(talking) != hearing_now:
                 hearing_now = bool(talking)
@@ -1261,7 +1260,10 @@ def avatar_script():
         look = json.loads(os.environ.get("JAMIE_LOOK") or "{}")
     except json.JSONDecodeError:
         look = {}
-    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "avatar.js")) as f:
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "avatar.js")
+    if not os.path.exists(path):  # source checkout; Docker copies it beside bot.py
+        path = os.path.join(os.path.dirname(path), "..", "extension", "avatar.js")
+    with open(path, encoding="utf-8") as f:
         return (f"window.__jamieLook = {json.dumps(look)};\n"
                 f"window.__jamieMicPassthrough = {json.dumps(bool(TEST_AUDIO))};\n" + f.read())
 
@@ -1304,24 +1306,35 @@ def said_by_me(text):
     return False
 
 
-async def speak(page, text):
+async def speak(page, text, hush=None):
     """Say text into the call (one thing at a time). Never raises: speech is a nicety."""
     if not (VOICE and text and VOICE_ENGINE.available()):
         return
-    hush = speaking["hush"]
+    if hush is None:
+        hush = speaking["hush"]
     try:
-        speaking["said"] = speaking["said"][-9:] + [(time.monotonic(), text)]
-        audio = await VOICE_ENGINE.synth(text)
         async with voice_lock:
+            if speaking["hush"] != hush:
+                return
+            # Keep acknowledgments ahead of answers even if their synthesis times differ.
+            audio = await VOICE_ENGINE.synth(text)
             if speaking["hush"] != hush:  # "stop talking" came after this was queued
                 return
+            speaking["said"] = speaking["said"][-9:] + [(time.monotonic(), text)]
             speaking["until"] = float("inf")
-            await page.evaluate("b => window.__jamieVoice && window.__jamieVoice.ctx && window.__jamieVoice.say(b)",
-                                base64.b64encode(audio).decode())
+            try:
+                await page.evaluate("b => { if (!window.__jamieVoice) throw new Error('Voice channel is unavailable'); "
+                                    "return window.__jamieVoice.say(b); }", base64.b64encode(audio).decode())
+            finally:
+                speaking["until"] = time.monotonic()
     except Exception as e:
         log("Couldn't speak:", str(e).splitlines()[0])
-    finally:
-        speaking["until"] = time.monotonic()
+
+
+async def stop_speaking(page):
+    """Interrupt playback and discard anything synthesized or queued before the interruption."""
+    speaking["hush"] += 1
+    await page.evaluate("window.__jamieVoice && window.__jamieVoice.stop()")
 
 
 TASKS = set()  # fire-and-forget tasks: a reference keeps them from being garbage-collected mid-run
@@ -1335,7 +1348,7 @@ def background(coro):
 
 
 def speak_soon(page, text):
-    background(speak(page, text))
+    background(speak(page, text, speaking["hush"]))
 
 
 CODE_FILES = (".html", ".js", ".jsx", ".ts", ".tsx", ".css", ".py", ".go", ".rs", ".java", ".rb", ".php", ".sh")
