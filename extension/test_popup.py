@@ -28,7 +28,7 @@ MEET = "https://meet.google.com/abc-defg-hij"
 
 
 def jamie(id, code, env, personality, agent):
-    return {"id": id, "state": "running", "meet_url": f"https://meet.google.com/{code}", "env": env,
+    return {"id": id, "state": "running", "status": "listening", "meet_url": f"https://meet.google.com/{code}", "env": env,
             "personality": personality, "agent": agent, "google": "main",
             "screen": "http://localhost:32768/vnc.html",
             "apps": {"3000": "http://localhost:32769", "5173": "http://localhost:32770", "8000": "http://localhost:32771"}}
@@ -152,6 +152,7 @@ def main():
         page.wait_for_timeout(300)
         page.screenshot(path=f"{SHOTS}/2-connected-running.png", full_page=True)
         assert page.locator("#jamies li.here").count() == 1
+        assert "abc-defg-hij · listening" in page.locator("#jamies li.here .meta").inner_text()  # what it's doing
 
         # Stop sends DELETE and the list updates
         page.locator("#jamies li", has_text="Math · Tutor · Codex").locator("button").click()

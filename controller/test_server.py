@@ -30,4 +30,9 @@ rejects({"meet_url": "https://meet.google.com/abc-defg-hij/../x"}, "meet_url")
 rejects({"meet_url": "https://meet.google.com/abc-defg-hij", "env": "../../etc"}, "unknown env")
 rejects({"meet_url": "https://meet.google.com/abc-defg-hij", "agent": "gpt"}, "unknown agent")
 rejects({"env": "default"}, "expected JSON")
+assert server.status([]) == "starting"
+assert server.status(["10:00 Opening https://meet.google.com/abc", "10:00 Clicked 'ask to join'. Waiting to be admitted (up to 10 min)..."]) == "waiting to be admitted"
+assert server.status(["Listening for '/jz7' in chat", "claude <- Gabe asked out loud: build it"]) == "working on a request"
+assert server.status(["claude <- Gabe asked out loud: build it", "claude -> Done."]) == "listening"
+assert server.status(["Listening", "Call ended or Jamie was removed."]) == "left the call"
 print("controller OK")
