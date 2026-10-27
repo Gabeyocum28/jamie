@@ -90,7 +90,7 @@ case "$cmd" in
     [ -f "environments/$ENV_NAME/.env" ] && voice_flags+=(--env-file "environments/$ENV_NAME/.env")
     docker run --rm "${voice_flags[@]}" -v "jamie-files-$ENV_NAME:/files" \
       --entrypoint python3 "$img" /app/voice.py --check --output /files/jamie-voice-check.mp3 ;;
-  test)  run -- bash -c "cd /app && python3 test_env.py && python3 test_hearing.py && python3 test_voice.py && python3 test_speech.py && python3 test_notes.py && python3 test_show.py && python3 test_avatar.py"
+  test)  run -- bash -c "cd /app && python3 test_env.py && python3 test_hearing.py && python3 test_voice.py && python3 test_speech.py && python3 test_notes.py && python3 test_show.py && python3 test_avatar.py && python3 test_workers.py"
          (cd controller && JAMIE_ROOT=.. python3 test_server.py) ;;
   e2e)
     if [ "$1" = all ]; then
