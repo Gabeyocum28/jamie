@@ -81,7 +81,7 @@ def main():
         page.goto(url)
 
         # Not connected yet: dropdowns disabled, Settings open
-        assert page.locator("#env").is_disabled() and "Connect in Settings first" in page.locator("#env").inner_text()
+        assert page.locator("#env").is_disabled() and "Connect first" in page.locator("#env").inner_text()
         assert page.locator("#settings").get_attribute("open") is not None
         assert page.locator("#voice").is_checked(), "voice is on by default"
         page.screenshot(path=f"{SHOTS}/1-not-connected.png", full_page=True)
