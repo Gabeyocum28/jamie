@@ -278,6 +278,7 @@ team agrees. Every room depends on it.
 
 ```
 README.md               this file
+DEMO.md                 a tested 6-minute demo script, with what to say and what happens
 .env.example            template for your .env (settings and secrets, gitignored)
 jamie.sh                the command for everything: setup, logins, controller, join, test, shell
 Dockerfile              jamie-base: Chromium, virtual screen, the bot, and the three agent CLIs.
@@ -306,6 +307,7 @@ controller/
   test_server.py        self-check: request validation
   Dockerfile            the controller's image (Python and the Docker CLI)
 extension/              the Chrome extension (manifest, popup.html, popup.js)
+  test_popup.py         checks the popup against a fake controller (python3 extension/test_popup.py)
   avatar.js             Jamie's camera: a glowing orb with a face. The popup uses it for the live
                         preview, and the image copies it in so the bot can show it in Meet
 environments/           rooms; each folder is one. README.md explains everything about them
