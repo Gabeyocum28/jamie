@@ -78,6 +78,24 @@ def main():
         await c.reset()
         assert c.proc is None and not c.has_session
     asyncio.run(twice())
+
+    # Learning: Jamie saves its own instant controls per room
+    bot.LEARNED = os.path.join(root, "learned")
+    for bad in [("Next Slide", "x", ["ArrowRight"], None), ("pause", "x", ["k"], None), ("ok", "x", None, None),
+                ("ok", "x", ["k"], "echo")]:
+        try:
+            bot.learn(*bad)
+            raise AssertionError(f"learned {bad}")
+        except ValueError:
+            pass
+    bot.learn("next-slide", "go to the next slide", keys=["ArrowRight"])
+    bot.learn("weather", "the weather somewhere", run="echo weather in {arg}")
+    write(f"{ws}/controls.json", json.dumps({"next-slide": {"description": "room's own", "keys": ["PageDown"]}}))
+    rc = bot.room_controls()
+    assert rc["next-slide"]["keys"] == ["PageDown"] and "weather" in rc  # the room wins a clash; learned ones join
+    assert "the weather somewhere" in bot.controls().values()
+    out = asyncio.run(bot.control(None, "weather", "Paris; touch /tmp/pwned"))
+    assert out == "weather in Paris; touch /tmp/pwned" and not os.path.exists("/tmp/pwned"), out  # arg is quoted
     print("env OK")
 
 

@@ -30,8 +30,8 @@ RUN curl -fsSL https://github.com/coder/code-server/releases/download/v4.96.4/co
       > /home/pwuser/.local/share/code-server/User/settings.json
 
 # Agent logins live in named volumes mounted on these dirs; they must exist so the volumes are pwuser-owned
-RUN mkdir -p /data /workspace /app /home/pwuser/.claude /home/pwuser/.codex /home/pwuser/.gemini \
- && chown -R pwuser:pwuser /data /workspace /app /home/pwuser
+RUN mkdir -p /data /workspace /app /learned /home/pwuser/.claude /home/pwuser/.codex /home/pwuser/.gemini \
+ && chown -R pwuser:pwuser /data /workspace /app /learned /home/pwuser
 COPY --chown=pwuser:pwuser jamie/ /app/
 # The avatar lives with the extension, which uses it for its live preview
 COPY --chown=pwuser:pwuser extension/avatar.js /app/avatar.js

@@ -259,5 +259,48 @@ async def fun():
     print("e2e OK")
 
 
+async def learn():
+    """./jamie.sh e2e learn: Jamie teaches itself a shortcut, then uses it without the agent."""
+    audio = "/tmp/jamie-test-learn.wav"
+    timeline(audio, [(25, os.path.join(HERE, "test-learn.wav")), (60, os.path.join(HERE, "test-coin.wav"))])
+    url = await new_meeting()
+    print("e2e: meeting", url, flush=True)
+    proc = await asyncio.create_subprocess_exec(
+        "python3", os.path.join(HERE, "bot.py"), url, env={**os.environ, "JAMIE_TEST_AUDIO": audio},
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+    seen = []
+
+    async def pump():
+        async for line in proc.stdout:
+            seen.append(line.decode(errors="replace").rstrip())
+            print("  bot |", seen[-1], flush=True)
+
+    reader = asyncio.create_task(pump())
+    start = time.monotonic()
+    try:
+        while time.monotonic() - start < 240 and proc.returncode is None and not any(re.search(r"control: coin-?flip", s) for s in seen):
+            await asyncio.sleep(2)
+        await asyncio.sleep(2)
+    finally:
+        if proc.returncode is None:
+            proc.terminate()
+        await proc.wait()
+        reader.cancel()
+    learned = any("Learned controls now:" in s and re.search(r"coin-?flip", s) for s in seen)  # whatever it named it
+    used = [s for s in seen if re.search(r"control: coin-?flip", s)]
+    instant = used and re.search(r"heads|tails", used[0], re.I)
+    asked = [i for i, s in enumerate(seen) if "heard You:" in s and "coin flip." in s.lower() and "learn" not in s.lower()]
+    agent_after = asked and any(" <- " in s for s in seen[asked[-1]:])
+    checks = [(learned, "the agent taught itself a coin flip control"),
+              (bool(instant), f"\"coin flip\" then ran it as an instant control: {used[:1]}"),
+              (not agent_after, "...without calling the agent")]
+    for good, what in checks:
+        print(f"e2e: {'ok ' if good else 'NO '} {what}")
+    if not all(good for good, _ in checks):
+        sys.exit(1)
+    print("e2e OK")
+
+
 if __name__ == "__main__":
-    asyncio.run(fun() if os.environ.get("JAMIE_ENV") == "fun" else main())
+    scenario = fun if os.environ.get("JAMIE_ENV") == "fun" else learn if "learn" in sys.argv else main
+    asyncio.run(scenario())
