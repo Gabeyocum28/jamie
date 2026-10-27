@@ -688,17 +688,23 @@ SCROLL = {"scroll-down": "scrollBy({top: innerHeight * 0.8, behavior: 'smooth'})
 # What's visible on the shared tab: things to click get a number (data-jamie-pick) so "open" can click them
 ON_SCREEN_JS = """() => {
   document.querySelectorAll('[data-jamie-pick]').forEach(e => e.removeAttribute('data-jamie-pick'));
-  const seen = new Set(), items = [];
+  const seen = new Set(), found = [];
   for (const e of document.querySelectorAll('a[href], button, [role=button], [role=link]')) {
     const r = e.getBoundingClientRect();
     if (!r.width || !r.height || r.bottom < 0 || r.top > innerHeight || r.right < 0 || r.left > innerWidth) continue;
-    const text = (e.getAttribute('title') || e.innerText || e.getAttribute('aria-label') || '').trim().replace(/\\s+/g, ' ');
+    // Really visible here: not in a closed menu, not covered by something else
+    const x = Math.min(Math.max(r.left + r.width / 2, 0), innerWidth - 1), y = Math.min(Math.max(r.top + r.height / 2, 0), innerHeight - 1);
+    const top = document.elementFromPoint(x, y);
+    if (!top || !(e === top || e.contains(top) || top.contains(e))) continue;
+    // The words people see beat tooltips ("Evolution", not "Toggle Evolution subsection")
+    const text = (e.innerText || e.getAttribute('aria-label') || e.getAttribute('title') || '').trim().replace(/\\s+/g, ' ');
     if (text.length < 3 || text.length > 120 || seen.has(text)) continue;
     seen.add(text);
-    e.dataset.jamiePick = items.length;
-    items.push(text);
-    if (items.length >= 60) break;
+    const main = !!e.closest('main, article, [role=main], #content, #contents, #primary');
+    found.push({ e, text, main });
   }
+  found.sort((a, b) => b.main - a.main);  // the page's own content before site navigation
+  const items = found.slice(0, 80).map((f, n) => { f.e.dataset.jamiePick = n; return f.text; });
   const h = document.querySelector('h1');
   return { url: location.href, heading: h ? h.innerText.trim().slice(0, 120) : '', items };
 }"""
@@ -716,7 +722,7 @@ def describe(screen):
     if not screen:
         return "Nothing is being shared."
     return (f"Shared tab: {screen['heading'] or '(no heading)'} ({screen['url'][:150]})\n"
-            f"Visible: {'; '.join(screen['items'][:40]) or '(nothing clickable)'}")
+            f"Visible: {'; '.join(screen['items']) or '(nothing clickable)'}")
 
 
 LEARNED = os.environ.get("JAMIE_LEARNED", "/learned")  # a volume per room: what Jamie learned, kept across calls
