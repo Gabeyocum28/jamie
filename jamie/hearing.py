@@ -56,8 +56,15 @@ class Captions:
         """Take a CAPTIONS_JS snapshot; return [(speaker, text)] for words finished by a pause."""
         now = time.monotonic() if now is None else now
         lines = []
+        if blocks is not None:  # a block gone from the page (scrolled away) still said its last words
+            here = {b["id"] for b in blocks}
+            for gone in [i for i in self.blocks if i not in here]:
+                st = self.blocks.pop(gone)
+                new = fresh(st["said"], st["text"])
+                if new and (st["name"] != "You" or self.hear_self) and not st["name"].endswith("Presentation"):
+                    lines.append((st["name"], " ".join(new)))
         for b in blocks or []:
-            st = self.blocks.setdefault(b["id"], {"text": "", "changed": now, "said": []})
+            st = self.blocks.setdefault(b["id"], {"text": "", "changed": now, "said": [], "name": b["name"]})
             if b["text"] != st["text"]:
                 st["text"], st["changed"] = b["text"], now
             elif now - st["changed"] >= PAUSE:
@@ -150,8 +157,7 @@ class Judge:
 
     async def ask(self, prompt):
         if not self.proc or self.proc.returncode is not None or self.calls >= self.RESTART_AFTER:
-            if self.proc and self.proc.returncode is None:
-                self.proc.kill()
+            await self.close()
             self.proc = await asyncio.create_subprocess_exec(
                 *self.command(), stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL, limit=2**22, env={**os.environ, "MAX_THINKING_TOKENS": "0"})
@@ -193,9 +199,7 @@ class Judge:
                 verdict["action"] = "request"  # not a control we have: let the agent figure it out
             return verdict
         except Exception:  # no Claude login, timeout, bad output: fall back to the wake word
-            if self.proc and self.proc.returncode is None:
-                self.proc.kill()  # out of sync now; the next call starts a fresh one
-            self.proc = None
+            await self.close()  # out of sync now; the next call starts a fresh one
             text = " ".join(t for _, t in new)
             if self.wake.search(text):
                 return {"action": "request", "request": text, "ack": "On it.", "control": "", "arg": ""}
