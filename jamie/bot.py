@@ -995,7 +995,8 @@ async def act(page, agent, queue, action, request, ack, control_name="", arg="")
         background(run_control(page, control_name, arg))
         return False
     if ack:
-        speak_soon(page, ack)
+        if action != "request":  # "On it: ..." only goes to chat: out loud, Jamie just gives the answer
+            speak_soon(page, ack)
         await send(page, ack)
     if action == "leave":
         if NOTES and NOTES.lines:  # leave the notes behind in the chat
