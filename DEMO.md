@@ -53,12 +53,13 @@ Talk clearly and pause after each request. Jamie acts when you stop talking.
 
 ## Numbers worth quoting
 
-These come from tonight's real-call test runs:
-- **Speech to judgment:** about 1 second.
+These come from the real-call and judge test runs on 2026-10-27:
+- **Speech to judgment:** about 1 second (1.1s average over 40 phrases).
 - **Instant controls:** about 0.5 seconds after the judgment.
 - **"Play a video about…":** about 8 seconds to fullscreen, with no LLM.
-- **A question answered out loud:** about 4 seconds.
+- **A question answered out loud:** about 1 second after the judgment for quick facts; a few seconds when it has
+  to look something up.
 - **A working app built live:** about 35 seconds.
 - **Joining:** about 1 second from opening the meeting to clicking Join.
-- **The judge:** 36 of 36 on the real-phrase suite (`./jamie.sh judge`), with misheard names,
-  past-tense captions, talking *about* Jamie, and a real person named Amy.
+- **The judge:** 37 to 40 of 40 across runs on the real-phrase suite (`./jamie.sh judge`), with
+  misheard names, past-tense captions, talking *about* Jamie, and a real person named Amy.
