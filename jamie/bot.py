@@ -72,6 +72,8 @@ def core_prompt(cwd):
         "there, open the file you're writing with `python3 /app/bot.py --ide <file>` so they can watch, then run it "
         "and --show the result. If they ask about something on the shared screen ('that video', 'this link'), "
         "click it in the stage tab rather than searching again. "
+        "Your working directory is wiped when you leave the call: save anything worth keeping (code people "
+        "built, documents, exports) to /files/ (kept for this room; meeting notes are saved there automatically). "
         "You can teach yourself shortcuts. When you've done something people will likely ask for again and it "
         "comes down to key presses in the shared tab or one command, save it as an instant control so next time "
         "it happens in a second without you: `python3 /app/bot.py --learn <name> --description '<what people "
@@ -686,6 +688,24 @@ def describe(screen):
 
 
 LEARNED = os.environ.get("JAMIE_LEARNED", "/learned")  # a volume per room: what Jamie learned, kept across calls
+FILES = os.environ.get("JAMIE_FILES", "/files")        # a volume per room: what's worth keeping after the call
+
+
+def keep_meeting(started):
+    """Save this meeting's notes and transcript to FILES/<date time>/ (the workspace goes when Jamie does)."""
+    if not os.path.isdir(FILES):
+        return None
+    folder = os.path.join(FILES, time.strftime("%Y-%m-%d %H-%M", time.localtime(started)))
+    os.makedirs(folder, exist_ok=True)
+    if os.path.exists(os.path.join(WORKSPACE, "notes.md")):
+        shutil.copy(os.path.join(WORKSPACE, "notes.md"), folder)
+    if os.path.exists(os.path.join(WORKSPACE, "transcript.md")):  # just this meeting: the file can span several
+        with open(os.path.join(WORKSPACE, "transcript.md")) as f:
+            text = f.read()
+        start = text.rfind("\n## Meeting ")
+        with open(os.path.join(folder, "transcript.md"), "w") as f:
+            f.write(text[start + 1:] if start >= 0 else text)
+    return folder
 
 
 def read_controls(path):
@@ -883,7 +903,7 @@ def transcribe(lines):
 
 async def listen(page, agent):
     global NOTES
-    NOTES = notes.Notes(WORKSPACE)
+    NOTES, started = notes.Notes(WORKSPACE), time.time()
     queue, seen = asyncio.Queue(), set()
     state = {"busy": "", "last_reply": ""}
     caps, judge = hearing.Captions(hear_self=bool(TEST_AUDIO)), hearing.Judge(NAME, controls())
@@ -1021,6 +1041,10 @@ async def listen(page, agent):
         task.cancel()
         await agent.reset()
         await judge.close()
+        try:
+            log("Saved the meeting's notes and transcript to", keep_meeting(started))
+        except Exception as e:
+            log("Couldn't save the meeting files:", e)
 
 
 async def judged(judge, context, batch, state, people, page):
