@@ -42,6 +42,11 @@ async def main():
         await asyncio.sleep(0.05)
     assert not state["busy"] and not workers.waiting, state
 
+    # The same question twice (re-heard, re-punctuated by Meet) is taken once; a different one isn't
+    assert not workers.repeat("Dallin asked out loud: what caused the spike in July?\n\n(On the shared screen ...)")
+    assert workers.repeat("Luke asked out loud: What caused the spike in July")
+    assert not workers.repeat("what caused the dip in February?")
+
     # The screen: another request that's still running has it, so --show refuses; free, it's taken
     with open(bot.SCREEN, "w") as f:
         f.write("1")

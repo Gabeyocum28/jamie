@@ -745,8 +745,21 @@ class Workers:
 
     def __init__(self, page, agent, state):
         self.page, self.state, self.waiting = page, state, []
+        self.recent = []  # (when, what was asked) for requests taken lately
         self.agents = [agent] + [Agent(agent.name, agent.servers, i)
                                  for i in range(2, WORKERS + 1 if agent.name == "claude" else 0)]
+
+    def repeat(self, prompt):
+        """The same question again (heard twice, or asked again right after): True when it's already taken.
+        Without this, two agents would answer it at once, neither knowing about the other."""
+        asked, now = prompt.split("\n")[0].split("asked out loud: ")[-1].lower().strip(), time.monotonic()
+        # shortcut: a word-for-word repeat within 45s is dropped even if meant ("again"); if people complain, ask the judge
+        self.recent = [(t, r) for t, r in self.recent if now - t < 45]
+        if any(SequenceMatcher(None, asked, r).ratio() > 0.9 for _, r in self.recent):
+            log("skipped a repeat:", asked[:100])
+            return True
+        self.recent.append((now, asked))
+        return False
 
     def full(self):
         return bool(self.waiting) or len(self.state["busy"]) == len(self.agents)
@@ -1091,6 +1104,8 @@ async def act(page, workers, action, request, ack, control_name="", arg=""):
             await send(page, "Okay, I stopped.")
             log("control: cancel -> stopped the agent")
         return False
+    if action == "request" and workers.repeat(request):
+        return False
     if action == "control":  # in the background: listening goes on while e.g. YouTube loads
         background(run_control(page, control_name, arg))
         return False
@@ -1282,6 +1297,8 @@ async def listen(page, agent):
                     if verdict["action"] == "request":  # the agent sees what's on the shared screen too
                         request += f"\n\n(On the shared screen right now: {describe(await on_screen(page))})"
                     if verdict["action"] == "request" and verdict.get("answer"):  # the judge knew it: no agent needed
+                        if workers.repeat(request):
+                            continue
                         log("quick answer:", verdict["answer"])
                         speak_soon(page, verdict["answer"])
                         await send(page, verdict["answer"])
