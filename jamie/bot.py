@@ -42,15 +42,26 @@ DEBUG = os.environ.get("JAMIE_DEBUG") == "1"
 CHUNK = 450        # Meet chat messages get cut off if too long
 MAX_CHUNKS = 8
 
+def public_url(port):
+    """The address people open for an app on port: the controller maps ports to random host ones and says
+    which in /tmp/jamie-urls.json; jamie.sh maps them 1:1."""
+    try:
+        return json.load(open("/tmp/jamie-urls.json"))[str(port)]
+    except (OSError, ValueError, KeyError):
+        return f"http://localhost:{port}"
+
+
 def core_prompt(cwd):
     # Shared by every environment and personality: how Jamie works in a call.
+    links = ", ".join(f"port {p} at {public_url(p)}" for p in (3000, 5173, 8000))
     return (
         f"You are {NAME}, an AI agent sitting in a Google Meet call. People talk to you out loud or in "
         "the meeting chat. Spoken requests reach you through live captions, which can mishear words: "
         "read them generously. The meeting transcript so far is in transcript.md; use it for context, "
         f"notes and summaries. Your working directory is {cwd}; build and run things there. If you start "
         "a web server, bind 0.0.0.0 on port 3000, 5173 or 8000 and run it in the background (nohup ... &) "
-        "so the user can open http://localhost:<port>. Reply in plain text, no markdown, as short as "
+        f"so the user can open it. Never give out localhost:<port> links from inside your container: the "
+        f"links that work on the user's computer are {links}. Reply in plain text, no markdown, as short as "
         "possible (under 1200 characters): say what you did and where to find it.\n"
         "You control your own Chromium with the browser tools. One tab is the Meet call: never navigate, "
         "close or click in it (it's hidden from your browser tools). Open your own tabs to browse. Don't use "
@@ -560,6 +571,18 @@ def codex_mcp(servers):
     return flags
 
 
+def said_aloud(tool):
+    """What the agent asked to say with `bot.py --say '...'` (spoken by the bot as soon as it sees the command)."""
+    cmd = tool.get("input", {}).get("command", "") if tool.get("name") == "Bash" else ""
+    if "/app/bot.py --say" not in cmd:
+        return ""
+    try:
+        words = shlex.split(cmd)
+        return words[words.index("--say") + 1].strip()
+    except (ValueError, IndexError):
+        return ""
+
+
 def narrate(tool):
     """A few words on what the agent is doing, for people waiting in the call (None: not worth saying)."""
     name, args = tool.get("name", ""), tool.get("input", {})
@@ -720,6 +743,11 @@ async def worker(page, agent, queue, state):
             if path.endswith(CODE_FILES) and not said.get("ide"):  # code is being written: let people watch
                 said["ide"] = True
                 background(watch_code(page, path))
+            if line := said_aloud(tool):  # the agent chose to say it: always, right away
+                said.update(at=time.monotonic(), last=line)
+                log("says:", line)
+                speak_soon(page, line)
+                return
             if step and step != said["last"] and time.monotonic() - said["at"] > 10:
                 said.update(at=time.monotonic(), last=step)
                 log("progress:", step)
@@ -1378,9 +1406,11 @@ CODE_FILES = (".html", ".js", ".jsx", ".ts", ".tsx", ".css", ".py", ".go", ".rs"
 
 
 async def watch_code(page, path):
-    """Put VS Code on screen with the file the agent is writing (unless the editor is already up)."""
+    """Put VS Code on screen with the file the agent is writing, unless the editor, or something the agent
+    put on screen from its workspace or a local server (a room's own page, its app), is already up."""
     try:
-        if f":{IDE_PORT}" not in (await on_screen(page) or {}).get("url", ""):
+        url = (await on_screen(page) or {}).get("url", "")
+        if not url.startswith((f"file://{WORKSPACE}/", "http://localhost:", "http://127.0.0.1:")):
             await asyncio.sleep(1)  # let the first write land
             log("Showing the code being written:", await ide(page, path))
     except Exception as e:
@@ -1421,6 +1451,7 @@ def main():
     ap.add_argument("--show", metavar="URL", help="screen-share URL in the running call ('off' stops)")
     ap.add_argument("--play", metavar="QUERY", help="screen-share the top YouTube result for QUERY")
     ap.add_argument("--video", choices=VIDEO_ACTIONS, help="control the video in the shared tab")
+    ap.add_argument("--say", metavar="TEXT", help="(for the agent) say TEXT in the call while working")
     ap.add_argument("--ide", nargs="?", const=".", metavar="FILE", help="show VS Code on screen (and open FILE)")
     ap.add_argument("--learn", metavar="NAME", help="save a new instant control for this room (with --description and --keys or --run)")
     ap.add_argument("--description", help="for --learn: what people would say to ask for it")
@@ -1437,6 +1468,8 @@ def main():
             print(learn(a.learn, a.description or a.learn, a.keys, a.run))
         except ValueError as e:
             sys.exit(f"Couldn't learn it: {e}")
+    elif a.say:
+        print("Said.")  # the bot in the call saw this command and is saying it
     elif a.login:
         asyncio.run(login())
     elif a.ide:

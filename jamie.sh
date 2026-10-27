@@ -95,7 +95,7 @@ case "$cmd" in
   e2e)
     if [ "$1" = all ]; then
       results=()
-      for s in "" learn vibe open cancel "--env fun" "--env study" "--env work"; do
+      for s in "" learn vibe open cancel "--env fun" "--env study" "--env work" "--env code"; do
         # shellcheck disable=SC2086
         if "$0" e2e $s > "/tmp/jamie-e2e-${s// /}.log" 2>&1; then line="ok  ${s:-main}"; else line="NO  ${s:-main}  (log: /tmp/jamie-e2e-${s// /}.log)"; fi
         results+=("$line")  # (no ${results[-1]}: macOS ships bash 3.2)
