@@ -47,16 +47,21 @@ image() {
   fi
 }
 
-run() {  # run [docker flags...] -- <command...>
-  local flags=() img
-  while [ "$1" != -- ]; do flags+=("$1"); shift; done; shift
+run() {  # run [--screen-only] [docker flags...] -- <command...>
+  local flags=() img ports=(6080 3000 5173 8000) port_flags=()
+  while [ "$1" != -- ]; do
+    if [ "$1" = --screen-only ]; then ports=(6080); else flags+=("$1"); fi
+    shift
+  done
+  shift
   img=$(image)
   mkdir -p "workspace/$ENV_NAME"
   [ -f "environments/$ENV_NAME/.env" ] && flags+=(--env-file "environments/$ENV_NAME/.env")
   # One Jamie at a time per machine: these ports are fixed.
   [ -t 0 ] && flags+=(-t)
+  for port in "${ports[@]}"; do port_flags+=(-p "$JAMIE_BIND:$port:$port"); done
   docker run --rm -i --init --shm-size 2g --name "jamie-$ENV_NAME" \
-    -p "$JAMIE_BIND:6080:6080" -p "$JAMIE_BIND:3000:3000" -p "$JAMIE_BIND:5173:5173" -p "$JAMIE_BIND:8000:8000" \
+    "${port_flags[@]}" \
     --env-file .env -e JAMIE_ENV="$ENV_NAME" "${flags[@]}" --label "jamie.google=${JAMIE_GOOGLE:-main}" \
     -v "jamie-google-${JAMIE_GOOGLE:-main}:/data" -v "jamie-learned-$ENV_NAME:/learned" -v "jamie-files-$ENV_NAME:/files" \
     -v jamie-claude:/home/pwuser/.claude -v jamie-codex:/home/pwuser/.codex -v jamie-gemini:/home/pwuser/.gemini \
@@ -73,7 +78,7 @@ case "$cmd" in
   google-login)
     [[ "${1:-main}" =~ ^[A-Za-z0-9_-]+$ ]] || { echo "Name: letters, digits, - and _ only"; exit 1; }
     echo "Google login screen: http://$JAMIE_HOST:6080/vnc.html" >&2
-    JAMIE_GOOGLE=${1:-main} run --label "jamie.login=${1:-main}" -- python3 /app/bot.py --login ;;
+    JAMIE_GOOGLE=${1:-main} run --screen-only --label "jamie.login=${1:-main}" -- python3 /app/bot.py --login ;;
   agent-login)
     case "$1" in
       claude) run -- claude ;;                       # then /login; or use CLAUDE_CODE_OAUTH_TOKEN in .env
