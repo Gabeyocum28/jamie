@@ -42,15 +42,26 @@ DEBUG = os.environ.get("JAMIE_DEBUG") == "1"
 CHUNK = 450        # Meet chat messages get cut off if too long
 MAX_CHUNKS = 8
 
+def public_url(port):
+    """The address people open for an app on port: the controller maps ports to random host ones and says
+    which in /tmp/jamie-urls.json; jamie.sh maps them 1:1."""
+    try:
+        return json.load(open("/tmp/jamie-urls.json"))[str(port)]
+    except (OSError, ValueError, KeyError):
+        return f"http://localhost:{port}"
+
+
 def core_prompt(cwd):
     # Shared by every environment and personality: how Jamie works in a call.
+    links = ", ".join(f"port {p} at {public_url(p)}" for p in (3000, 5173, 8000))
     return (
         f"You are {NAME}, an AI agent sitting in a Google Meet call. People talk to you out loud or in "
         "the meeting chat. Spoken requests reach you through live captions, which can mishear words: "
         "read them generously. The meeting transcript so far is in transcript.md; use it for context, "
         f"notes and summaries. Your working directory is {cwd}; build and run things there. If you start "
         "a web server, bind 0.0.0.0 on port 3000, 5173 or 8000 and run it in the background (nohup ... &) "
-        "so the user can open http://localhost:<port>. Reply in plain text, no markdown, as short as "
+        f"so the user can open it. Never give out localhost:<port> links from inside your container: the "
+        f"links that work on the user's computer are {links}. Reply in plain text, no markdown, as short as "
         "possible (under 1200 characters): say what you did and where to find it.\n"
         "You control your own Chromium with the browser tools. One tab is the Meet call: never navigate, "
         "close or click in it (it's hidden from your browser tools). Open your own tabs to browse. Don't use "

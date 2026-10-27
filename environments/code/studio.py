@@ -9,6 +9,7 @@ the app on the right reloads after each save. The page itself is studio.html.
 """
 import asyncio
 import http.server
+import json
 import os
 import socket
 import subprocess
@@ -168,11 +169,23 @@ def serve(folder):
     preview(f"http://localhost:{PORT}/")
 
 
+def public(url):
+    """The same address as people open it on their computer (the controller maps ports to random ones)."""
+    try:
+        urls = json.load(open("/tmp/jamie-urls.json"))
+    except (OSError, ValueError):
+        return url
+    for port, outside in urls.items():
+        for host in ("localhost", "127.0.0.1", "0.0.0.0"):
+            url = url.replace(f"http://{host}:{port}", outside)
+    return url
+
+
 def preview(url):
     if not asyncio.run(_up()):
         start()
-    asyncio.run(on_page("u => studio.preview(u)", url))
-    print(f"Live on the Studio: {url} (reloads whenever you save)")
+    asyncio.run(on_page("([u, label]) => studio.preview(u, label)", [url, public(url)]))
+    print(f"Live on the Studio, reloading whenever you save. People open it on their own computer at {public(url)}")
 
 
 def main():

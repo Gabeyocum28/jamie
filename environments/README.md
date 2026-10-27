@@ -10,8 +10,13 @@ software it has, which extra tools it can call. Pick one in the Chrome extension
 - `study/`: tutoring and homework help; `quiz.py` puts flashcards on screen
 - `work/`: runs meetings; `agenda.py` shows the agenda, a timer, decisions and action items
 - `fun/`: hangouts and party games; `trivia.py` is a game-show screen with a scoreboard
+- `code/`: live coding; `studio.py` puts the Studio on screen: code typing itself out on the left, the
+  running app on the right, reloading on every save. Jamie builds a playable first version, talks while it
+  works (`python3 /app/bot.py --say '...'`, which any room can use) and ends each round with a choice
 
 `python3 environments/test_rooms.py` checks the study, work and fun tools and their controls.
+`docker run --rm --entrypoint python3 -v "$PWD/environments/code:/t:ro" jamie-base /t/test_studio.py` checks
+the Studio.
 
 ## What every room gets for free
 

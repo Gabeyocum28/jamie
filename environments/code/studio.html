@@ -2,8 +2,10 @@
 <meta charset="utf-8">
 <title>Studio</title>
 <!-- The code room's shared screen. studio.py drives it: studio.type(), studio.preview(), studio.reload() -->
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css"
+      integrity="sha384-oaMLBGEzBOJx3UHwac0cVndtX5fxGQIfnAeFZ35RTgqPcYlbprH9o9PUV/F8Le07" crossorigin="anonymous">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"
+        integrity="sha384-F/bZzf7p3Joyp5psL90p/p89AZJsndkSoGwRpXcZhleCWhd8SnRuoYo4d0yirjJp" crossorigin="anonymous"></script>
 <style>
   :root { --bg: #0d1117; --panel: #161b22; --line: #30363d; --dim: #7d8590; --text: #e6edf3; --accent: #3fb950; --live: #f85149 }
   * { box-sizing: border-box }
@@ -119,14 +121,14 @@ window.studio = {
     };
     step(performance.now());
   },
-  preview(url) {
+  preview(url, label = url) {  // label: the address people open it at on their own computer
     base = url;
-    $("url").textContent = url;
+    $("url").textContent = label;
     $("wait").style.display = "none";
     $("frame").style.display = "block";
     $("dot").className = "on";
     $("frame").src = url;
-    note("Live app: " + url);
+    note("Open it yourself: " + label);
   },
   reload() {
     if (!base) return;

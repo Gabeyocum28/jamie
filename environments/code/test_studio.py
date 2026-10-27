@@ -18,6 +18,13 @@ assert studio.changed_part("abcXYZdef", "abc123def") == (3, 3)
 assert studio.changed_part("aaa", "aaaa") == (3, 0)  # prefix and suffix never overlap
 assert studio.changed_part("hello", "hello") == (5, 0)
 print("changed_part OK")
+assert studio.public("http://localhost:8000/") == "http://localhost:8000/"  # no controller: same address
+with open("/tmp/jamie-urls.json", "w") as f:
+    f.write('{"8000": "http://localhost:55012", "3000": "http://localhost:55010"}')
+assert studio.public("http://localhost:8000/game/") == "http://localhost:55012/game/"
+assert studio.public("http://0.0.0.0:3000") == "http://localhost:55010"
+os.remove("/tmp/jamie-urls.json")
+print("public links OK")
 
 
 async def browser():

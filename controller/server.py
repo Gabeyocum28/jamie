@@ -16,6 +16,7 @@ import json
 import os
 import re
 import secrets
+import shlex
 import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -147,7 +148,12 @@ def create(req, img, google):
     except Exception:
         docker("rm", "-f", name)
         raise
-    return info(json.loads(docker("inspect", name))[0])
+    jamie = info(json.loads(docker("inspect", name))[0])
+    try:  # Jamie's apps are on random host ports: tell it the links people can actually open
+        docker("exec", name, "sh", "-c", f"echo {shlex.quote(json.dumps(jamie['apps']))} > /tmp/jamie-urls.json")
+    except RuntimeError as e:
+        print("Couldn't tell", name, "its app links:", e, flush=True)
+    return jamie
 
 
 def status(log_lines):

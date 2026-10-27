@@ -180,7 +180,7 @@ the Jamie card in `chrome://extensions`.
    | "Jamie, play **that** Guardians of the Galaxy video" | Clicks it on the shared screen |
    | "Jamie, what's the capital of Australia?" | Answered out loud in about a second (the judge knows it, so no agent needed) |
    | "Jamie, what's the weather in Denver right now?" | The agent looks it up, then answers out loud and in chat |
-   | "Hey Jamie, can we start vibe coding? Let's make a to-do app" | Opens VS Code on screen and builds it live |
+   | "Hey Jamie, can we start vibe coding? Let's make a to-do app" | Opens VS Code on screen and builds it live. In the **code** room: the Studio, playable in about 30 seconds |
    | "Jamie, show the meeting notes" | Live notes, updating on screen as people talk |
    | "Jamie, let's play space trivia" (fun room) | Builds a game show; "next question", "reveal the answer" are instant |
    | "Jamie, learn a shortcut: when I say coin flip, flip a coin" | Saves it; "Jamie, coin flip" is now instant |
@@ -266,6 +266,7 @@ ones show up in the extension's dropdowns on their own.
   - The `Dockerfile` installs sympy, numpy, scipy and matplotlib.
   - `board.py` screen-shares LaTeX and plots.
   - `study/`, `work/` and `fun/` add flashcards, a meeting board and a trivia game show.
+  - `code/` is for live coding: the Studio shows the code typing itself out next to the running app.
 - **Personalities** (`personalities/<name>.md`): a few lines on how Jamie talks. See `hype.md`.
 - **Addons** (`addons/<name>/`): ready-made tools a room can choose to add, such as Wolfram|Alpha.
   Read **[addons/README.md](addons/README.md)**.
@@ -317,6 +318,7 @@ environments/           rooms; each folder is one. README.md explains everything
   study/                school: tutoring, flashcards on screen
   work/                 meetings: agenda board with timer, decisions, action items
   fun/                  hangouts: trivia game show, would-you-rather, music
+  code/                 live coding: the Studio (code typing out + the live app), playable in ~30s
   test_rooms.py         checks the rooms' on-screen tools (python3 environments/test_rooms.py)
 personalities/          one .md file per personality
 addons/                 tools waiting to be added to a room; README.md explains them
@@ -346,12 +348,13 @@ Docker things this creates on your machine:
 ./jamie.sh debug <meet-url> [...]     join and dump Meet's page to workspace/<env>/meet-dump.html
 ./jamie.sh shell [--env NAME]         a shell inside a room's image
 ./jamie.sh test                       run all self-checks (fast, no real call)
-./jamie.sh judge                      score the judge on 36 real phrases (~30s of model calls)
+./jamie.sh judge                      score the judge on 47 real phrases (~1 min of model calls)
 ./jamie.sh e2e                        end-to-end check in a real Meet (~5 min, see below)
-./jamie.sh e2e all                    every real-call scenario below, one after another (~25 min)
+./jamie.sh e2e all                    every real-call scenario below, one after another (~35 min)
 ./jamie.sh e2e learn                  ...Jamie teaches itself a shortcut, then uses it
 ./jamie.sh e2e vibe|open|cancel       ...builds an app live / clicks what's on screen / "never mind"
 ./jamie.sh e2e --env fun|study|work   ...a room's on-screen app, driven by its own controls
+./jamie.sh e2e --env code             ...builds a game in the Studio, plays it, changes it on request
 ./jamie.sh learned [--env N] [--keep] shortcuts Jamie taught itself (--keep: into controls.json)
 ./jamie.sh files [--env N]            copy kept notes/transcripts/work to ./files/<room>/
 ```

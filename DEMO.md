@@ -1,7 +1,7 @@
 # Demo script
 
 A tight 6-minute demo of Jamie for judges. Every line below comes from a scenario that passes in a
-real Meet call (`./jamie.sh e2e`, `e2e vibe`, `e2e learn`, `e2e open`, `e2e --env fun|study|work`).
+real Meet call (`./jamie.sh e2e`, `e2e vibe`, `e2e learn`, `e2e open`, `e2e --env fun|study|work|code`).
 
 ## Before you start (5 minutes, once)
 
@@ -40,6 +40,7 @@ Talk clearly and pause after each request. Jamie acts when you stop talking.
 | fun | "Hey Jamie, let's play a trivia game about space. Make it three questions." | "Jamie, next question" · "Jamie, reveal the answer" |
 | study | "Hey Jamie, make me three flashcards about the solar system and put them on screen." | "Jamie, show the answer" · "Jamie, next card" |
 | work | "Hey Jamie, set up our meeting agenda on screen: intro, demo, and wrap up, five minutes each." | "Jamie, start the timer" · "Jamie, next agenda item" |
+| code | "Hey Jamie, build a blackjack game we can play together." | Playable in about 30 seconds, with the code typing out beside it. Pick one of the two options it offers: "Let's do betting chips." |
 
 ## If something goes sideways
 
