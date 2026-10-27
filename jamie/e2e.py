@@ -319,6 +319,64 @@ async def learn():
     print("e2e OK")
 
 
+async def vibe():
+    """./jamie.sh e2e vibe: build a small app live in VS Code, then show it working."""
+    audio = "/tmp/jamie-test-vibe.wav"
+    timeline(audio, [(25, os.path.join(HERE, "test-vibe.wav"))])
+    url = await new_meeting()
+    print("e2e: meeting", url, flush=True)
+    before = set(os.listdir(bot.WORKSPACE))
+    proc = await asyncio.create_subprocess_exec(
+        "python3", os.path.join(HERE, "bot.py"), url, env={**os.environ, "JAMIE_TEST_AUDIO": audio},
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+    seen, editor_seen, start = [], False, time.monotonic()
+
+    async def pump():
+        async for line in proc.stdout:
+            seen.append(line.decode(errors="replace").rstrip())
+            print("  bot |", seen[-1], flush=True)
+
+    reader = asyncio.create_task(pump())
+    try:
+        while time.monotonic() - start < 360 and proc.returncode is None and not any("claude ->" in s for s in seen):
+            try:
+                editor_seen = editor_seen or await stage_eval("!!document.querySelector('.monaco-workbench')")
+            except Exception:
+                pass  # the browser isn't up yet
+            await asyncio.sleep(2)
+        await asyncio.sleep(3)
+        app_url = await stage_eval("location.href")
+        # Use the app like a person would: fill its number inputs, check the page shows a different result
+        result = await stage_eval("""(() => {
+            const inputs = [...document.querySelectorAll('input')].filter(i => i.type !== 'hidden');
+            if (!inputs.length) return 'no inputs';
+            const before = document.body.innerText;
+            for (const [i, el] of inputs.entries()) {
+                el.value = ['84.50', '18', '3'][i] ?? '1';
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+            document.querySelector('button')?.click();
+            return document.body.innerText !== before ? 'reacted: ' + document.body.innerText.slice(0, 160) : 'no change';
+        })()""")
+    finally:
+        if proc.returncode is None:
+            proc.terminate()
+        await proc.wait()
+        reader.cancel()
+    made = sorted(set(os.listdir(bot.WORKSPACE)) - before)
+    checks = [(editor_seen, "VS Code was on screen while it worked"),
+              (bool([f for f in made if not f.startswith(".")]), f"it wrote the app in the workspace {made}"),
+              (bool(app_url) and ("localhost:" in app_url or app_url.startswith("file:")) and "8443" not in app_url,
+               f"the finished app is what's shared now ({app_url})"),
+              (str(result).startswith("reacted"), f"the app works when used: {str(result)[:120]!r}")]
+    for good, what in checks:
+        print(f"e2e: {'ok ' if good else 'NO '} {what}")
+    if not all(good for good, _ in checks):
+        sys.exit(1)
+    print("e2e OK")
+
+
 if __name__ == "__main__":
     env = os.environ.get("JAMIE_ENV", "default")
-    asyncio.run(room(env) if env in ROOMS else learn() if "learn" in sys.argv else main())
+    asyncio.run(room(env) if env in ROOMS else learn() if "learn" in sys.argv else vibe() if "vibe" in sys.argv else main())
