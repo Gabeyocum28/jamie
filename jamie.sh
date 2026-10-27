@@ -67,7 +67,7 @@ case "$cmd" in
       *)      echo "usage: ./jamie.sh agent-login claude|codex|gemini"; exit 1 ;;
     esac ;;
   shell) run -- bash ;;
-  test)  run -- bash -c "cd /app && python3 test_env.py && python3 test_hearing.py && python3 test_voice.py && python3 test_show.py && python3 test_avatar.py"
+  test)  run -- bash -c "cd /app && python3 test_env.py && python3 test_hearing.py && python3 test_voice.py && python3 test_notes.py && python3 test_show.py && python3 test_avatar.py"
          (cd controller && JAMIE_ROOT=.. python3 test_server.py) ;;
   e2e)   run -- python3 /app/e2e.py ;;
   judge) run -- bash -c "cd /app && python3 judge_eval.py" ;;

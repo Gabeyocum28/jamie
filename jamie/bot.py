@@ -26,6 +26,7 @@ from playwright.async_api import async_playwright, TimeoutError as PWTimeout
 
 import cdp_filter
 import hearing
+import notes
 import voice
 
 PROFILE = os.environ.get("JAMIE_PROFILE", "/data/chrome-profile")
@@ -638,6 +639,7 @@ BUILTIN_CONTROLS = {
     "show": "open a website on the shared screen; arg = its full URL",
     "ide": "open the code editor (VS Code) on the shared screen",
     "quiet": "stop talking (Jamie stops speaking right away)",
+    "notes": "show the live meeting notes (summary, decisions, action items) on the shared screen",
 }
 SCROLL = {"scroll-down": "scrollBy({top: innerHeight * 0.8, behavior: 'smooth'})",
           "scroll-up": "scrollBy({top: -innerHeight * 0.8, behavior: 'smooth'})",
@@ -761,6 +763,11 @@ async def control(page, name, arg=""):
         return f"Showing {arg}."
     if name == "ide":
         return await ide(page)
+    if name == "notes":
+        if NOTES and NOTES.new:
+            await NOTES.update()  # catch up first: people asking for notes want the latest
+        await show(page, "file://" + os.path.join(WORKSPACE, "notes.html"))
+        return "The meeting notes are on screen."
     if name == "quiet":
         await page.evaluate("window.__jamieVoice && window.__jamieVoice.stop()")
         return "Quiet."
@@ -771,7 +778,7 @@ async def run_control(page, name, arg):
     try:
         result = await asyncio.wait_for(control(page, name, arg), 40)
         log("control:", name, arg, "->", result)
-        if name in ("play-video", "open", "show", "ide"):  # took a moment: say what's up (pause etc. speak for themselves)
+        if name in ("play-video", "open", "show", "ide", "notes"):  # took a moment: say what's up (pause etc. speak for themselves)
             speak_soon(page, result)
     except Exception as e:
         log("control failed:", name, arg, e)
@@ -787,6 +794,15 @@ async def act(page, agent, queue, action, request, ack, control_name="", arg="")
         speak_soon(page, ack)
         await send(page, ack)
     if action == "leave":
+        if NOTES and NOTES.lines:  # leave the notes behind in the chat
+            try:
+                if NOTES.new:
+                    await asyncio.wait_for(NOTES.update(), 25)
+                if NOTES.recap():
+                    await send(page, "Meeting notes:\n" + NOTES.recap())
+                    log("Posted the meeting notes:", NOTES.recap().replace("\n", " | "))
+            except Exception as e:
+                log("Couldn't post the notes:", e)
         await asyncio.sleep(1.5)  # let the goodbye be heard
         await leave_button(page).first.click()
         return True
@@ -822,6 +838,8 @@ def transcribe(lines):
 
 
 async def listen(page, agent):
+    global NOTES
+    NOTES = notes.Notes(WORKSPACE)
     queue, seen = asyncio.Queue(), set()
     state = {"busy": "", "last_reply": ""}
     caps, judge = hearing.Captions(hear_self=bool(TEST_AUDIO)), hearing.Judge(NAME, controls())
@@ -911,6 +929,9 @@ async def listen(page, agent):
                 lines = [ln for ln in lines if ln not in mine]
             if lines:
                 transcribe(lines)
+                for s, t in lines:
+                    NOTES.add(s, t)
+                NOTES.update_soon()
                 for s, t in lines:
                     log("heard", f"{s}: {t}")
                 pending += lines
@@ -1036,6 +1057,7 @@ async def read_captions(page):
         return None
 
 
+NOTES = None  # notes.Notes for the current call, set in listen()
 VOICE_ENGINE = voice.Voice()
 voice_lock = asyncio.Lock()
 speaking = {"until": 0.0}  # when Jamie last stopped talking (test mode: its own voice isn't a request)

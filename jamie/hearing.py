@@ -172,6 +172,8 @@ class Judge:
         try:
             async with self.lock:
                 verdict = await asyncio.wait_for(self.ask(prompt), self.timeout)
+            if verdict["control"] in ("leave", "stop_sharing", "reset"):  # it sometimes puts these in the wrong field
+                verdict["action"], verdict["control"] = verdict["control"], ""
             assert verdict["action"] in ("none", "wait", "request", "control", "stop_sharing", "reset", "leave")
             if verdict["action"] == "control" and verdict["control"] not in self.controls:
                 verdict["action"] = "request"  # not a control we have: let the agent figure it out

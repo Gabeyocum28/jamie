@@ -43,6 +43,8 @@ CASES = [
     # Sharing, leaving
     ("Jamie key stops sharing your screen.", ["Gabe"], YOUTUBE, "stop_sharing"),
     ("Hey, hey Jamie, uh, I think you can leave. I think you're done here.", ["Gabe"], NOTHING, "leave"),
+    ("Thanks Jamie, you can leave now.", ["Gabe"], "Shared tab: Meeting notes (file:///workspace/notes.html)", "leave"),
+    ("Okay team, we decided the demo will use the fun room. Sam will record a backup video by Friday.", ["Gabe", "Sam"], NOTHING, "none"),
     # Sound-alikes (captions mishear "Jamie")
     ("Amy, can you pull up a YouTube video of a cat playing piano?", ["Gabe"], NOTHING, "control:play-video"),
     ("Amy, can you send me the slides after this?", ["Gabe", "Amy Chen"], NOTHING, "none"),
@@ -70,8 +72,25 @@ async def main():
         passed += ok
         print(f"{'ok ' if ok else 'NO '} {times[-1]:.1f}s  {got:22} {said!r}" + ("" if ok else f"  (wanted {want})"))
     await judge.close()
-    print(f"judge: {passed}/{len(CASES)} right, {sum(times) / len(times):.1f}s average")
-    sys.exit(0 if passed == len(CASES) else 1)
+
+    # Notes: a short real exchange should come out as a decision and an owned action item
+    import tempfile
+    import notes
+    n = notes.Notes(tempfile.mkdtemp())
+    for speaker, said in [("Gabe", "Okay so for the demo I think we should use the fun room, it's the most visual."),
+                          ("Sam", "Yeah agreed, fun room it is."), ("Gabe", "Hey Jamie, pause the video."),
+                          ("Sam", "I can record a backup video in case the wifi dies. I'll have it by Friday."),
+                          ("Gabe", "Cool. Do we know if the judges can hear the audio?")]:
+        n.add(speaker, said)
+    start = time.monotonic()
+    md = await n.update()
+    good = "fun room" in md.lower() and "sam" in md.lower() and "friday" in md.lower() and "pause" not in md.lower()
+    print(f"{'ok ' if good else 'NO '} {time.monotonic() - start:.1f}s  notes: decision + Sam's action item, no assistant chatter")
+    if not good:
+        print(md)
+    passed += good
+    print(f"judge: {passed}/{len(CASES) + 1} right, {sum(times) / len(times):.1f}s average per judgment")
+    sys.exit(0 if passed == len(CASES) + 1 else 1)
 
 
 if __name__ == "__main__":
