@@ -339,12 +339,22 @@ async def code_room():
             except Exception:
                 pass
             await asyncio.sleep(1)
+        if proc.returncode is not None:
+            print("e2e: the bot exited early, code", proc.returncode, flush=True)
         await asyncio.sleep(3)
         before = await studio("app:document.body.innerText")
-        # Play it: click the first button the app shows, the page should change
-        played = await studio("""app:(() => { const b = [...document.querySelectorAll('button')].find(b => b.offsetParent);
-            if (!b) return 'no buttons'; const before = document.body.innerText; b.click();
-            return new Promise(r => setTimeout(() => r(document.body.innerText !== before ? 'reacted' : 'no change'), 800)) })()""")
+        # Play it like a person: press the buttons that can be pressed until the game changes
+        played = await studio("""app:(async () => {
+            const buttons = [...document.querySelectorAll('button')].filter(b => b.offsetParent && !b.disabled);
+            if (!buttons.length) return 'no buttons';
+            for (const b of buttons) {
+                const before = document.body.innerText;
+                b.click();
+                await new Promise(r => setTimeout(r, 800));
+                if (document.body.innerText !== before) return 'reacted';
+            }
+            return 'no change';
+        })()""")
         buttons = await studio("app:[...document.querySelectorAll('button')].map(b => b.innerText.trim()).join(' | ')")
     finally:
         if proc.returncode is None:
